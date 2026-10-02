@@ -5,9 +5,9 @@
 
 The diagram has been retained as supplied, including the entities, columns, key annotations, and relationships. The normalized standalone Mermaid file is [`diagrams/database_schema.mmd`](./diagrams/database_schema.mmd). For field descriptions and observed API alignment, see [data_model.md](./data_model.md).
 
-The owner subsequently provided an authorized-device table definition. It is saved with its comments and seed example in [authorised_devices_reference.sql](./authorised_devices_reference.sql), also as reference only. Its table identifier has been normalized to `authorized_devices` to match the spelling the owner confirmed and the existing backend.
+The owner subsequently provided an authorized-device table definition. It is saved with its comments and seed example in [authorised_devices_reference.sql](./authorised_devices_reference.sql), also as reference only. The table identifier is `authorised_devices`, matching the owner's database.
 
-- The table has no per-device credential or public-key field. The device GUID is therefore still the only credential accepted by the current login route; the earlier request for an OS-protected per-device key is not addressed by this DDL.
+- The table needs a `device_public_key` column for the approved Ed25519 challenge-response login. That additive deployment SQL is in [backend/device_auth_schema.sql](../backend/device_auth_schema.sql); this repository has no migration runner, so apply it manually after review and backup.
 
 The table uses `uuid_generate_v4()`, so applying it requires the corresponding UUID extension to be available. Its seed uses `ON CONFLICT (device_id) DO NOTHING`; a row already using the same GUID under another ID can still cause a unique-GUID conflict. Do not apply this reference without confirming the target schema and intended idempotent enrollment process.
 

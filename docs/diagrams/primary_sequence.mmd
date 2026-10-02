@@ -1,21 +1,29 @@
 sequenceDiagram
     actor Operator
     participant UI as React terminal
+    participant Main as Electron main process
     participant API as Express API
     participant Auth as Device middleware
     participant DB as PostgreSQL
 
-    Operator->>UI: Select Authenticate Hardware
-    UI->>API: POST /api/auth/device-login {device_guid}
-    API->>DB: Find active authorized_devices row
-    DB-->>API: Device record
-    API-->>UI: 200 {token, device_name}
-    UI->>UI: Keep token in component state
+    Operator->>UI: Select authenticate terminal
+    UI->>Main: Request device GUID and public key
+    UI->>API: POST /api/auth/device-challenge {device_guid}
+    API->>DB: Verify active provisioned device
+    API->>DB: Insert one-use nonce with 60-second expiry
+    API-->>UI: {challengeId, challenge}
+    UI->>Main: Sign challenge
+    Main-->>UI: Ed25519 signature
+    UI->>API: POST /api/auth/device-login {device_guid, challenge_id, signature}
+    API->>DB: Atomically consume challenge
+    API->>API: Verify signature; issue 5-minute JWT
+    API-->>UI: {token, device_name, device_guid}
+    UI->>UI: Keep token in React memory
 
     Operator->>UI: Search/select customer and submit payment
     UI->>API: POST /api/payments + bearer token + x-device-guid
     API->>Auth: Check token, GUID match, and active device
-    Auth->>DB: Check authorized_devices
+    Auth->>DB: Check authorised_devices
     DB-->>Auth: Active status
     Auth-->>API: Allow request
     API->>DB: BEGIN
@@ -24,7 +32,8 @@ sequenceDiagram
     API->>DB: INSERT debt_payments
     API->>DB: UPDATE customers.pending_balance
     API->>DB: COMMIT
-    API-->>UI: 201 payment + previous/updated balance
+    API-->>UI: 201 payment + previous/updated balance + X-Access-Token
+    UI->>UI: Replace in-memory JWT
     UI-->>Operator: Show receipt and updated balance
 
     opt A database operation fails

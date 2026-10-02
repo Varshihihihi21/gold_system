@@ -21,19 +21,29 @@ const rateFields = [
 ];
 
 /** Load and update the current date's gold rates through the existing API. */
-export default function RatesPage({ token, deviceGuid, notify, onAuthFailure }) {
+export default function RatesPage({ token, deviceGuid, role, notify, onAuthFailure, onTokenRotated }) {
   const { values, setValues, reset, dirty } = useDraftForm(initialRates);
+  const tokenRef = useRef(token);
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedRates, setSavedRates] = useState(null);
+  const [auditHistory, setAuditHistory] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [touched, setTouched] = useState({});
 
   useEffect(() => {
     let active = true;
-    apiRequest('/api/gold-rates/today', { token, deviceGuid, onAuthFailure })
+    apiRequest('/api/gold-rates/today', {
+      token: tokenRef.current,
+      deviceGuid,
+      onAuthFailure,
+      onTokenRotated,
+    })
       .then((row) => {
         if (!active) return;
         setSavedRates(row);
@@ -45,7 +55,17 @@ export default function RatesPage({ token, deviceGuid, notify, onAuthFailure }) 
       .catch((error) => { if (active) setLoadError(error.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [token, deviceGuid, reset, dirtyRef, onAuthFailure]);
+  }, [deviceGuid, reset, dirtyRef, onAuthFailure, onTokenRotated]);
+
+  useEffect(() => {
+    if (!savedRates) return;
+    let active = true;
+    apiRequest(`/api/gold-rates/audit?date=${encodeURIComponent(savedRates.rate_date)}`, {
+      token: tokenRef.current, deviceGuid, onAuthFailure, onTokenRotated,
+    }).then((rows) => { if (active) setAuditHistory(rows); })
+      .catch((error) => { if (active) notify(`Rate audit history could not be loaded: ${error.message}`, 'error'); });
+    return () => { active = false; };
+  }, [savedRates?.rate_date, deviceGuid, onAuthFailure, onTokenRotated, notify]);
 
   const fieldError = (key, value) => {
     if (!touched[key]) return '';
@@ -64,10 +84,11 @@ export default function RatesPage({ token, deviceGuid, notify, onAuthFailure }) 
     try {
       const row = await apiRequest('/api/gold-rates', {
         method: 'POST',
-        token,
+        token: tokenRef.current,
         deviceGuid,
         onAuthFailure,
-        body: JSON.stringify(Object.fromEntries(rateFields.map(([key]) => [key, Number(values[key])]))),
+        onTokenRotated,
+        body: JSON.stringify(Object.fromEntries(rateFields.map(([key]) => [key, values[key]]))),
       });
       setSavedRates(row);
       reset(Object.fromEntries(rateFields.map(([key]) => [key, String(row[key] ?? values[key])])));
@@ -89,9 +110,13 @@ export default function RatesPage({ token, deviceGuid, notify, onAuthFailure }) 
       {loadError && <Feedback kind="error" title="Rates could not be loaded">{loadError}</Feedback>}
       {loading ? <section className="surface-card"><Skeleton rows={4} /></section> : (
         <section className="surface-card rates-card">
-          {warning && <Feedback kind="warning">{warning}</Feedback>}
           {!loadError && !savedRates && <Feedback kind="info" title="No rates saved for today">Enter the rates below to create today’s first rate record.</Feedback>}
-          {savedRates && <Feedback kind="success" title="Today’s rates are available">You can update these values; saving replaces today’s rate record.</Feedback>}
+          {savedRates && <Feedback kind="success" title="Today’s rates are available">
+            {role === 'OWNER' ? 'Changes to today’s rates require an audit record.' : 'Rates are locked after initial setup; ask an OWNER-authorized terminal to change them.'}
+          </Feedback>}
+          {savedRates && role !== 'OWNER' && <Feedback kind="warning" title="Owner authorization required">
+            Only an OWNER-authorized terminal may change rates after today’s rates have been saved.
+          </Feedback>}
           <form className="rates-form" onSubmit={submit} noValidate>
             <div className="rate-grid">
               {rateFields.map(([key, label], index) => {
@@ -109,13 +134,29 @@ export default function RatesPage({ token, deviceGuid, notify, onAuthFailure }) 
             </div>
             <div className="form-actions">
               <span className="draft-label">{dirty ? 'Unsaved changes · held in memory only' : 'Changes save only when submitted'}</span>
-              <button className="button button-primary" type="submit" disabled={saving || loading}>
+              <button className="button button-primary" type="submit"
+                disabled={saving || loading || Boolean(savedRates && role !== 'OWNER')}>
                 {saving ? 'Saving rates…' : 'Save today’s rates'}
               </button>
             </div>
           </form>
         </section>
       )}
+      {auditHistory.length > 0 && <section className="surface-card">
+        <h2>Today’s rate changes</h2>
+        <div className="table-scroll"><table className="data-table">
+          <caption className="sr-only">Audit log of today’s daily rate changes</caption>
+          <thead><tr><th scope="col">Changed</th><th scope="col">Editor</th><th scope="col">999 sell</th><th scope="col">49 sell</th><th scope="col">999 buy</th><th scope="col">Gatti buy</th></tr></thead>
+          <tbody>{auditHistory.map((entry) => <tr key={entry.audit_id}>
+            <td>{new Date(entry.changed_at).toLocaleString()}</td>
+            <td>{entry.device_name || entry.changed_by}</td>
+            <td>{entry.old_rate_999_sell} → {entry.new_rate_999_sell}</td>
+            <td>{entry.old_rate_49_sell} → {entry.new_rate_49_sell}</td>
+            <td>{entry.old_rate_999_buy} → {entry.new_rate_999_buy}</td>
+            <td>{entry.old_rate_fine_gatti_buy} → {entry.new_rate_fine_gatti_buy}</td>
+          </tr>)}</tbody>
+        </table></div>
+      </section>}
     </section>
   );
 }

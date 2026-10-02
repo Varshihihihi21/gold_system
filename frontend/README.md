@@ -1,6 +1,6 @@
-# Goldline Counter Terminal
+# Kalash Gold Counter Terminal
 
-This Vite + React frontend provides device authentication, daily gold-rate maintenance, customer registration/search, and customer debt payments. The API contract and database limits are documented in [`../docs/api_reference.md`](../docs/api_reference.md) and [`../docs/questions.md`](../docs/questions.md).
+This Vite + React frontend provides device authentication, daily gold-rate maintenance, customer registration/search, sales billing, gold purchases, debt payments, expenses, cash reconciliation, and profit analytics. The API contract and database limits are documented in [`../docs/api_reference.md`](../docs/api_reference.md) and [`../docs/live_schema.md`](../docs/live_schema.md).
 
 ## Run locally
 

@@ -1,26 +1,28 @@
 flowchart TD
-    A[Open terminal page] --> B{Token in current page memory?}
-    B -- No --> C[Operator selects Authenticate Hardware]
-    C --> D[POST device ID to device-login]
-    D --> E{Device exists and is active?}
+    A[Open Electron terminal] --> B[Clear transient Chromium session data]
+    B --> C[Load encrypted device key from OS-protected storage]
+    C --> D[Request one-time challenge]
+    D --> E{Device active and public key provisioned?}
     E -- No --> F[Show sign-in error]
-    E -- Yes --> G[Return 12-hour token]
-    G --> H[Keep token in React state]
-    B -- Yes --> H
-    H --> I[Show terminal modules]
-    I --> J{Operator action}
-    J --> K[Save today's rates]
-    J --> L[Register customer]
-    J --> M[Search phone and select customer]
-    M --> N[Submit debt payment]
-    K --> O[Protected API checks token and device]
-    L --> O
-    M --> O
-    N --> O
-    O --> P{Authorized?}
-    P -- No --> Q[Show request error]
-    P -- Yes --> R[Read or update PostgreSQL]
-    R --> S[Return JSON result]
-    S --> T[Update page status/results]
-    R -. Payment error .-> U[Rollback payment transaction]
-    U --> Q
+    E -- Yes --> G[Sign nonce in Electron main process]
+    G --> H[POST signature to device-login]
+    H --> I{Signature valid and challenge unused?}
+    I -- No --> F
+    I -- Yes --> J[Return 5-minute JWT]
+    J --> K[Keep token in React memory]
+    K --> L[Show terminal modules]
+    L --> M{Operator action}
+    M --> N[Save today's rates]
+    M --> O[Register/search customer]
+    M --> P[Submit debt payment]
+    N --> Q[Protected API verifies JWT and active device]
+    O --> Q
+    P --> Q
+    Q --> R{Authorized?}
+    R -- No --> S[Clear React session and Chromium storage]
+    R -- Yes --> T[Read or update PostgreSQL]
+    T --> U[Return JSON and rotated token]
+    U --> V[Update in-memory view/session]
+    T -. Payment error .-> W[Rollback payment transaction]
+    W --> X[Show actionable error]
+    S --> X

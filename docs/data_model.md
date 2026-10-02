@@ -2,32 +2,33 @@
 
 ## Schema source and implementation status
 
-The entity model in this document and [the standalone ER diagram](./diagrams/database_schema.mmd) comes from the schema supplied by the project owner on 2026-10-02. It is the current reference model for future development. It is **not** a database migration or a verified dump of the live database: this repository still contains no SQL schema or migration file.
+The owner-supplied ER diagram is documented in [database_schema.md](./database_schema.md). Live public-table columns, enum values, and constraints were later confirmed using Neon metadata and are summarized in [live_schema.md](./live_schema.md). The additive finance migration is [001_financial_workflows.sql](../backend/migrations/001_financial_workflows.sql); it must be applied manually and is not run by the application.
 
-The existing backend in `backend/server.js` implements only daily rate upsert/read, customer registration/search, and debt-payment creation. It does not yet implement the audit, invoice, purchase voucher, expense, logbook, reconciliation, or analytics workflows in the reference schema. The supplied model also does not declare enum members or decimal precision/scale for every DECIMAL field.
+The backend now implements daily rates and audit, customer search by name/phone, sales, buyback purchases, debt payments, expenses, inventory valuation, cash logbook, day close, and profit analytics. Confirmed decimal types and enums are documented in [live_schema.md](./live_schema.md).
 
 ## Entities
 
 “User-facing” indicates business records operators are expected to view or enter. “Internal” indicates system-control or generated accounting records.
 
-### `authorized_devices` — internal authorization (owner-provided DDL)
+### `authorised_devices` — internal authorization (owner-provided DDL)
 
-The supplied DDL has been normalized to `authorized_devices`, matching the existing backend and the project owner's confirmed canonical spelling. The reference file name retains the spelling used in the submitted SQL.
+The database and backend use the table name `authorised_devices`, matching the owner-provided DDL.
 
 | Field | Type | Key / meaning |
 |---|---|---|
 | `device_id` | UUID | Primary key; defaults to `uuid_generate_v4()`. |
-| `device_guid` | VARCHAR(100) | Required and unique. Current backend treats this public client value as the login credential. |
+| `device_guid` | VARCHAR(100) | Required and unique device identifier; not a secret or sufficient proof of identity. |
 | `device_name` | VARCHAR(200) | Optional terminal name returned by the login route. |
 | `role` | VARCHAR(50) | Required; defaults to `TERMINAL`. |
+| `device_public_key` | TEXT | Added as a manual deployment step; Ed25519 public key in SPKI PEM format. Login rejects devices without it. |
 | `is_active` | BOOLEAN | Required; defaults to true and checked by authentication middleware. |
-| `last_login_at` | TIMESTAMP WITH TIME ZONE | Optional login timestamp; current route does not update it. |
+| `last_login_at` | TIMESTAMP WITH TIME ZONE | Updated after a successful challenge-response login. |
 | `first_authorized_at` | TIMESTAMP WITH TIME ZONE | Required; defaults to the current time. |
 | `created_at`, `updated_at` | TIMESTAMP WITH TIME ZONE | Required; default to the current time. The shown DDL does not define automatic update behavior for `updated_at`. |
 
 The supplied SQL creates indexes for GUID, active rows (partial index), and role. The unique constraint on `device_guid` may make the separate GUID index redundant. It requires `uuid_generate_v4()` to be available. The seed's `ON CONFLICT (device_id)` does not handle a GUID collision under a different device ID.
 
-This table is documented, not applied as a migration. It does not add the per-device secret/public key needed for proof-of-possession, so the device-login security issue remains.
+The original owner DDL is a reference, not a migration. The additional `device_public_key` column is specified in [device_auth_schema.sql](../backend/device_auth_schema.sql) and must be manually applied. Device login now uses a one-time challenge and Ed25519 proof, then issues 5-minute JWTs that are replaced in the response header after each authenticated API request. Every API request also checks the device's active database status. The private key is encrypted with Electron `safeStorage`; this intentionally persists only the OS-protected device credential, not customer or transaction data.
 
 ### `daily_gold_rates` — user-facing
 
@@ -177,7 +178,7 @@ The diagram communicates the supplied model. Key labels (`PK`, `FK`, `UK`) come 
 
 ## Existing API-to-schema data flow
 
-1. Device login looks up an active terminal in the `authorized_devices` table. That internal table is not included in the supplied business ER diagram.
+1. Device login looks up an active terminal in the `authorised_devices` table. That internal table is not included in the supplied business ER diagram.
 2. `GET /api/gold-rates/today` reads the row for the current date from `daily_gold_rates`.
 3. `POST /api/gold-rates` inserts or updates the four rate columns for `CURRENT_DATE`. It does not currently write `daily_gold_rates_audit` rows or request an owner credential.
 4. `POST /api/customers` inserts a row into `customers`; `GET /api/customers/search` reads customer data by partial phone number.
@@ -186,7 +187,7 @@ The diagram communicates the supplied model. Key labels (`PK`, `FK`, `UK`) come 
 
 ## Known schema/API alignment questions
 
-- The API uses the internal `authorized_devices` table, not shown in the supplied business diagram.
+- The API uses the internal `authorised_devices` table, not shown in the supplied business diagram.
 - Existing payment code assumes it can subtract the payment from `pending_balance`; the meaning of positive/negative balances and overpayment remains unspecified.
 - Rate audit requirements cover mid-day changes in the user stories, but the supplied audit entity only stores before/after sell rates.
 - Enum labels, precise DECIMAL scales, nullability, defaults, indexes, and delete/update behavior are not specified.

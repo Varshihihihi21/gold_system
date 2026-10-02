@@ -9,7 +9,7 @@ This report reflects the checked-in source/configuration, the user stories, and 
 | Area | Finding |
 |---|---|
 | Languages | JavaScript (ES modules/JSX in frontend; CommonJS in backend), CSS, HTML, SQL embedded in backend. |
-| Runtime | Node.js is not pinned. Locked Vite requires Node `^20.19.0` or `>=22.12.0`; Express 5 requires Node `>=18`. |
+| Runtime | Node.js is not pinned. Vite requires `^20.19.0` or `>=22.12.0`; declared Electron 44.5.1 requires Node `>=22.12.0`. |
 | Frontend | React 19.2.8 with Vite 8.2.1 and `@vitejs/plugin-react`. |
 | CSS | Plain CSS and CSS custom properties; no Tailwind, CSS Modules, or CSS-in-JS. |
 | State | React hooks and component state; no external store. Protected session and form values are held in renderer memory. |
@@ -17,33 +17,38 @@ This report reflects the checked-in source/configuration, the user stories, and 
 | TypeScript | No; JavaScript/JSX. |
 | Backend | Node.js, Express 5.2.1. |
 | Data | PostgreSQL through `pg` 8.22.0. |
-| Authentication | `jsonwebtoken` 9.0.3, device JWT currently issued for 12 hours. |
+| Authentication | `jsonwebtoken` 9.0.3; Ed25519 device challenge-response, 5-minute JWTs, and per-request token rotation are implemented in backend source. |
 | Other packages | `cors` 2.8.6, `dotenv` 17.4.2. |
-| Desktop app | No Electron dependency, main/preload process, IPC, packaging configuration, OS keychain integration, or native printer support exists in this repository. |
+| Desktop app | Electron 44.5.1 is declared in `frontend/package.json`; main/preload source uses OS-protected credentials and IPC. Electron lockfile installation and distributable packaging remain incomplete. |
 | Hosting | Not declared. A comment mentions Neon, but no database hosting or API deployment setup is checked in. |
 
 ## B. API inventory
 
-Frontend base URL defaults to `http://localhost:4000`, configurable with `VITE_API_BASE_URL`. The backend uses `PORT` (default 4000). Requests/responses are JSON.
+**Updated implementation status (2026-10-02):** In addition to auth, rates, customers, and payments, the backend now exposes rate-audit, invoice, purchase, expense, inventory/opening-stock, logbook/close, and profit-analytics routes. Full contracts are in [api_reference.md](./api_reference.md); confirmed column/enum metadata is in [live_schema.md](./live_schema.md).
+
+Frontend base URL defaults to `http://localhost:4000` in development, configurable with `VITE_API_BASE_URL`; production builds reject non-HTTPS API URLs. The backend uses `PORT` (default 4000). Requests/responses are JSON.
 
 | Method and path | Request | Current response |
 |---|---|---|
-| `POST /api/auth/device-login` | `{ "device_guid": string }` | `200 { token, device_name }`; `400` missing GUID, `401` unknown/inactive device, `500` database error. |
-| `POST /api/gold-rates` | Four rate values: `rate_999_sell`, `rate_49_sell`, `rate_999_buy`, `rate_fine_gatti_buy` | `200` returned upserted row; writes the database's current date. |
+| `POST /api/auth/device-challenge` | `{ "device_guid": string }` | `200 { challengeId, challenge }`; PostgreSQL stores a one-use challenge with a 60-second expiry. |
+| `POST /api/auth/device-login` | `{ "device_guid": string, "challenge_id": string, "signature": string }` | `200 { token, device_name, device_guid, role }`; verifies Ed25519 proof and issues a 5-minute token. |
+| `POST /api/gold-rates` | Four positive decimal strings: `rate_999_sell`, `rate_49_sell`, `rate_999_buy`, `rate_fine_gatti_buy` | `200` returned upserted row; validates scale and range. |
 | `GET /api/gold-rates/today` | No body/query | `200` today's rate row or JSON `null`. |
-| `POST /api/customers` | `{ full_name, phone_number, address }` | `201` created customer; `409` unique constraint error; otherwise `500`. |
-| `GET /api/customers/search?phone=...` | Phone-number substring | `200` array, newest first, limit 10. |
+| `POST /api/customers` | `{ full_name, phone_number, address? }` | `201` created customer; `400` invalid fields; `409` unique constraint error; otherwise `500`. |
+| `GET /api/customers/search?q=...` | Non-empty name or phone substring | `200` array, newest first, limit 10; `400` if the query is absent or invalid. |
 | `POST /api/payments` | `{ customer_id, amount_paid, payment_mode?, notes? }` | `201 { payment, previous_balance, updated_balance }`; mode defaults to `CASH`. |
 
 All routes except device login use `Authorization` Bearer JWT and `x-device-guid`. Middleware also checks the GUID in the JWT and whether the device remains active. Protected middleware failures use `401` or `403`. Typical error body is `{ "error": string }`; missing customer and other payment errors currently return `500`.
 
-There is no pagination, upload, refresh-token, logout/revocation, owner-PIN, sales-invoice, purchase, expense, logbook, day-close, profit-report, audit-write, or print endpoint.
+**Correction to the preceding sentence:** It is outdated and should be disregarded. Both `/api/auth/device-challenge` and `/api/auth/device-login` are public; other registered API routes require `Authorization: Bearer <token>` and `x-device-guid`. Customer registration validates required strings and may return `400`; customer search requires a non-empty `phone` and may return `400`. Payments return `404` for an unknown customer, `400` for invalid input, and `422` if the updated balance exceeds the supported decimal range.
 
-**Authentication limitation:** Device login accepts the public client’s fixed `device_guid` as its only credential. A GUID shipped in frontend assets is discoverable and does not prove device possession.
+Protected requests return a replacement access token in `X-Access-Token`; the client holds the newest token in React memory. There is no pagination, upload, explicit refresh/logout endpoint, owner-PIN, sales-invoice, purchase, expense, logbook, day-close, profit-report, audit-write, or print API endpoint.
+
+**Authentication/deployment limitation:** Device keys must be manually provisioned in PostgreSQL using the additive SQL in `backend/device_auth_schema.sql`. There is no owner portal or public enrollment API. The backend listens on HTTP; production TLS must terminate at a configured HTTPS ingress.
 
 ## C. Data model
 
-The owner-provided logical model contains:
+The owner-provided logical model contains the entities below. Actual public column types, constraints, and enums supplied from Neon are documented in [live_schema.md](./live_schema.md).
 
 | Entity | Fields and types (as supplied) | Role and relationship |
 |---|---|---|
@@ -58,55 +63,51 @@ The owner-provided logical model contains:
 | `daily_logbook_summary` | UUID `logbook_id` PK; DATE `log_date` UK; DECIMAL opening, inflows, outflows, calculated close, actual cash, variance; BOOLEAN `is_closed`; TIMESTAMP `closed_at` | Daily cash reconciliation. |
 | `logbook_entries` | UUID `entry_id` PK; DATE `log_date`; ENUM `entry_type`, `payment_mode`, `source_type`; DECIMAL `amount`; UUID `source_reference_id`; VARCHAR `description`; TIMESTAMP `created_at` | Cash movements, linked polymorphically to their source. |
 
-The app queries `authorized_devices` (`device_id`, `device_guid`, `device_name`, `is_active`). The supplied DDL has been normalized to the same table spelling, as confirmed by the project owner. It still does not define a device secret/public key; see [the device schema reference](./authorised_devices_reference.sql).
+The app queries `authorised_devices` (`device_id`, `device_guid`, `device_name`, `device_public_key`, `is_active`, `role`) and `device_auth_challenges`. Public-key and challenge-table additions are documented in [the manual auth schema SQL](../backend/device_auth_schema.sql).
 
-Not specified by the model: ENUM values; DECIMAL precision/scale; nullability/defaults; FK delete/update rules; unique strategy for polymorphic logbook references. The audit entity only records changes to two sell rates, not the buy rates.
+Live enum values, precision/scale, and constraints supplied by the owner are documented in [live_schema.md](./live_schema.md). The observed rate audit originally lacked buy-rate old/new fields, which migration 001 adds.
 
-The current API implements only rate read/upsert, customer create/search, and debt-payment insert/balance adjustment. It does not currently insert rate audit rows or model the other listed business flows.
+The finance APIs now write invoices, purchases, expenses, debt payments, rate audit records, inventory changes, and source-linked logbook entries in database transactions. Only CASH transactions affect drawer totals. Earlier statements in this analysis that say these workflows are absent are historical and superseded by [api_reference.md](./api_reference.md).
 
 ## D. Existing frontend
 
-The current browser UI has a device-auth screen and three authenticated views: Daily Rates, Customers (create/search), and Payments (customer selection/payment). Source is organized across `frontend/src/pages/`, `components/`, `hooks/`, `api.js`, and CSS files. It uses React state, fetch, skeleton/empty/error states, debounced phone search, toast feedback, and tab-independent memory-only form state. Its exact current source inventory is in [README.md](./README.md#project-file-catalog).
+The Electron/React UI has authenticated views for Daily Rates, Customers, Payments, Billing, Purchases, Expenses, Logbook, and Analytics. It uses React state, fetch, loading/error/empty feedback, debounced name/phone search, toast feedback, and memory-only form state. Its source inventory is in [README.md](./README.md#project-file-catalog).
 
-The design uses warm gold accent tokens, neutral light/dark surfaces, system fonts, and plain responsive CSS. No router, UI library, design-token framework, or Electron renderer/main-process split exists.
+The design uses warm gold accent tokens, neutral light/dark surfaces, system fonts, and plain responsive CSS. There is no router, UI library, or external state library. Electron main/preload sources exist, but the dependency lock and distributable packaging still need completion.
 
 ### Gaps against the new stories
 
-- Only US-01's basic rate entry/read is partially supported; no owner PIN or immutable audit record is implemented.
-- US-02/03 sale calculations, overrides, and invoices/items do not exist.
-- US-04 buyback/purchase voucher and inventory intake do not exist.
-- US-05/06 invoice-based partial payment, debt banners, and invoice balance summaries do not exist.
-- US-07 has a basic debt-payment API, but no UPI mode contract, payment-history receipt endpoint, or logbook inflow.
-- US-08 through US-11 (automated logbook entries, expenses, close/reconciliation, profit analytics) do not exist in backend routes.
-- Electron, secure device provisioning, credential vault access, native ESC/POS IPC printing, packaging, and update/kill-switch support are absent.
+- US-01 through US-10 now have API/UI workflows, including OWNER-device rate changes, audited price overrides, transactional ledger posting, inventory setup, and daily reconciliation.
+- US-11 uses weighted-average fine-gold cost recorded per invoice item. The daily-average denominator is operating dates with at least one sale, purchase, debt payment, or expense.
+- Historical sale items without cost basis are marked incomplete; analytics does not fabricate a zero cost for them.
+- There is no payment-history endpoint, cloud-hosting/TLS configuration, desktop installer workflow, or end-to-end live-Neon run in this repository/environment.
+- Electron main/preload source adds OS-protected private-key storage, memory-only Chromium session controls, and IPC printing through the OS driver. The accepted spooler exception may retain jobs on disk. Packaging and an owner portal are absent.
 - Current backend transfer security is deployment-dependent: the code listens with plain HTTP and no TLS 1.3 termination is configured in this repository.
 
 ## E. Gaps and recommendations
 
-1. Keep the present React/Vite/Express/PostgreSQL stack; do not add replacement UI or state libraries. Electron is explicitly part of the target but not currently installed or configured.
-2. Treat the owner ERD and device DDL as reference models until a migration or live schema export confirms their constraints.
-3. Complete authentication design before adding an Electron shell: per-device proof-of-possession must use an OS credential vault and a matching server-side enrollment/verification contract. The current public GUID login is insufficient; the supplied DDL contains no per-device key.
-4. Define production HTTPS/TLS termination and the Electron renderer origin before configuring CORS. CORS is not an access-control substitute.
-5. Agree the transaction/API contracts and numeric constraints for invoices, purchase vouchers, expenses, logbook entries and close, and analytics before UI or state-machine implementation.
-6. Use scaled integer arithmetic or an already-installed arbitrary-precision package for money/weight calculations. No decimal arithmetic package is currently declared; do not silently rely on binary floating-point for ledger postings.
-7. Printer spooler retention, OS pagefile/swap, crash dumps, and privileged DevTools/runtime inspection cannot be guaranteed away by React or Electron alone. Require managed OS/device policy and validate the actual printer/driver path.
+1. Keep React/Vite/Express/PostgreSQL and use Electron only as the requested desktop wrapper. Use scaled `BigInt` arithmetic instead of adding a decimal library.
+2. Use the supplied live-schema metadata in [live_schema.md](./live_schema.md), and review/apply migrations manually.
+3. Apply/review `device_auth_schema.sql` and manually provision each terminal's Ed25519 public key before using device login.
+4. Configure production HTTPS/TLS, `VITE_API_BASE_URL`, runtime `GOLD_API_URL`, and exact CORS origins. CORS is not an authentication control.
+5. Review and manually apply `backend/migrations/001_financial_workflows.sql` before deploying the added financial routes; no migration has been applied to Neon.
+6. OS paging/swap, crash dumps, privileged process inspection, and accepted printer-spooler retention remain host-level controls; Electron cannot guarantee that process data never reaches disk.
 
 ## Phase 2 — security and local-exposure audit
 
 | Finding | Status | Why it matters / next step |
 |---|---|---|
-| Device GUID is public and sole login factor | **Open, high risk** | A caller who extracts the frontend constant can request a 12-hour JWT for an active device. The confirmed `authorized_devices` DDL has no per-device key hash. Requires an approved provisioning/schema contract. |
+| Device GUID was the only login factor | **Hardened in source; DB setup required** | Login now requires Ed25519 proof, a single-use 60-second challenge, and 5-minute JWTs. Apply the manual SQL and provision each terminal's public key. |
 | Browser form persistence | **Fixed in this repo** | Earlier form drafts used `sessionStorage`; form values now exist only in React memory and are discarded on view unmount. |
 | JWT signing fallback | **Fixed in this repo** | Backend now refuses to start unless `JWT_SECRET` is set. The deployed secret still needs protected delivery and rotation procedures. |
-| CORS origin reflection | **Hardened, deployment pending** | Backend now has an exact-origin allowlist. Current defaults are Vite localhost origins; Electron `file:`/opaque `null` origin is not allowed. Final origin requires deployment choice. CORS is not authentication. |
+| CORS origin reflection | **Hardened, deployment pending** | Backend uses an exact-origin allowlist with `goldline://app` and Vite development origins as defaults. Production allowlist must be explicitly configured. |
 | PostgreSQL certificate verification | **Fixed in this repo** | `rejectUnauthorized` is now true. Private database CA trust must be configured rather than disabling verification. |
 | Client-to-API TLS 1.3 | **Open** | Backend starts with `app.listen` and no HTTPS listener/proxy config. The localhost default is HTTP. Production TLS 1.3 must be provided and verified at the selected ingress. |
 | Process memory and OS paging | **Platform control required** | JavaScript strings/GC and OS swap/pagefile/core dumps prevent a reliable app-only guarantee that RAM contents never reach disk. Use managed endpoint controls, crash policy, disk encryption, and threat-model decisions. |
-| Chromium DevTools inspection | **Open platform risk** | A local operator with debugging privileges can inspect renderer state. No Electron production policy or debugger restriction exists; privileged host compromise cannot be solved by UI code alone. |
-| Printer spooler retention | **No implementation yet** | No print path exists. Raw ESC/POS over IPC still needs a platform/device path that avoids or formally accepts spooler persistence. Validate on target OS/printer. |
+| Chromium web storage/cache | **Hardened in Electron source** | Uses a non-persistent session partition, disables caches, clears session data on startup/logout/exit, and lints against browser persistence APIs. |
+| Chromium DevTools inspection | **Reduced, not eliminated** | DevTools is disabled in packaged builds; privileged process inspection can still read memory. |
+| Printer spooler retention | **Accepted exception** | Receipt data is passed over IPC to the standard OS print driver. The spooler may write temporary data to disk, an exception accepted by the owner. |
 
-### Stop gate before implementation
+### Remaining implementation limits
 
-Per the supplied execution protocol, the audit stops here rather than adding Electron, calculations, financial state machines, or new routes. Required decisions are recorded in [questions.md](./questions.md). The device table columns and canonical spelling are now confirmed, but the absent per-device credential/provisioning contract leaves authentication design blocked.
-
-The new stories also add 11 workflows beyond the existing 3 protected views. Phase 3's verification matrix and Phase 4 code deliverables must wait until the owner confirms the security architecture and missing API/data contracts. The earlier top navigation map is not sufficient for these newly specified flows.
+The owner accepted external OS controls, administrator-provisioned keys, and standard printer-spooler retention as an exception. See the [verification matrix](./verification_matrix.md) for the status of each story. The pure cash ledger is not a substitute for persistent DB constraints or transaction integration; open contracts are listed in [questions.md](./questions.md). Electron installation/lockfile synchronization and distributable packaging remain unverified in this environment.

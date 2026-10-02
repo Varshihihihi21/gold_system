@@ -2,6 +2,11 @@ const pages = [
   { id: 'rates', label: 'Daily rates', marker: '01' },
   { id: 'customers', label: 'Customers', marker: '02' },
   { id: 'payments', label: 'Payments', marker: '03' },
+  { id: 'sales', label: 'Billing', marker: '04' },
+  { id: 'purchases', label: 'Purchases', marker: '05' },
+  { id: 'expenses', label: 'Expenses', marker: '06' },
+  { id: 'logbook', label: 'Logbook', marker: '07' },
+  { id: 'analytics', label: 'Analytics', marker: '08' },
 ];
 
 /** Authenticated layout with keyboard-accessible navigation between supported workflows. */
@@ -10,9 +15,9 @@ export default function AppShell({ page, setPage, deviceName, onSignOut, childre
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <header className="topbar">
-        <a className="brand" href="#main-content" aria-label="Goldline terminal home">
-          <span className="brand-mark" aria-hidden="true">G</span>
-          <span><strong>Goldline</strong><small>Counter terminal</small></span>
+        <a className="brand" href="#main-content" aria-label="Kalash Gold terminal home">
+          <span className="brand-mark" aria-hidden="true">K</span>
+          <span><strong>Kalash Gold</strong><small>Counter terminal</small></span>
         </a>
         <nav className="main-nav" aria-label="Main navigation">
           {pages.map((item) => (
@@ -34,7 +39,7 @@ export default function AppShell({ page, setPage, deviceName, onSignOut, childre
         </div>
       </header>
       <main id="main-content" className="main-content" tabIndex="-1">{children}</main>
-      <footer className="app-footer"><span>GOLDLINE / TERMINAL</span><span>Rates · Customers · Payments</span></footer>
+      <footer className="app-footer"><span>KALASH GOLD / TERMINAL</span><span>Rates · Billing · Stock · Cash · Analytics</span></footer>
     </div>
   );
 }

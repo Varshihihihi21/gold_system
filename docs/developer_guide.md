@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-Install Node.js `^20.19.0` or `>=22.12.0` (the range required by the locked Vite release) and npm. Express 5 itself supports Node `>=18`. A reachable PostgreSQL database with the expected tables is also required.
+Install Node.js `>=22.12.0` and npm (Electron 44 requires this; it also satisfies Vite 8). A reachable PostgreSQL database with the expected tables is required.
 
-The owner-provided ERD is preserved in [database_schema.md](./database_schema.md), but there is no executable SQL schema or migration, so a new developer cannot create the database from this repository alone. Obtain the compatible migration and an authorized device row from the project maintainer or environment owner. The supplied business ERD does not include the internal `authorized_devices` table, which the current API queries; its separate reference is documented in [authorised_devices_reference.sql](./authorised_devices_reference.sql).
+The business ERD is preserved in [database_schema.md](./database_schema.md), and live Neon metadata is summarized in [live_schema.md](./live_schema.md). This repository still does not contain a complete database bootstrap schema; obtain one from the database owner. The current API uses the separate `authorised_devices` table.
 
 ## Configuration
 
@@ -24,15 +24,21 @@ Additional runtime settings read in `backend/server.js`:
 |---|---|
 | `PORT` | HTTP listening port; defaults to `4000`. |
 | `JWT_SECRET` | Required strong, unique secret used to sign and verify login tokens. The backend refuses to start when it is missing. |
-| `CORS_ORIGINS` | Comma-separated exact browser origins allowed to read API responses. Development defaults to Vite's localhost origins; configure the approved Electron application origin in a packaged deployment. |
+| `CORS_ORIGINS` | Comma-separated exact origins; development defaults include Vite localhost origins and `goldline://app`. Configure only trusted production origins. |
 
 `JWT_SECRET` is now required; the backend exits rather than using a known fallback. Create a unique high-entropy value and keep it outside version control. `CORS_ORIGINS` should list only trusted frontend origins. Requests without an `Origin` header (for example, Postman) remain usable; this is not an authentication control.
 
 Do not commit `.env` or copy real credentials into documentation or logs. PostgreSQL TLS certificate verification is enabled. If the provider uses a private certificate authority, configure Node/PostgreSQL to trust that CA instead of disabling certificate verification.
 
-The frontend defaults to `http://localhost:4000` and can be pointed at another backend with the `VITE_API_BASE_URL` frontend environment variable. The Vite config does not define an API proxy. The terminal device identifier remains a fixed frontend constant and is currently the only credential used by device login; this is not secure proof of device possession.
+The frontend uses `VITE_API_BASE_URL` (development default `http://localhost:4000`). Production builds require HTTPS. The Electron main process also requires runtime `GOLD_API_URL` to match the built API origin; packaged mode refuses HTTP. Each terminal needs `GOLD_DEVICE_GUID`. The main process creates an Ed25519 keypair and stores only the OS-encrypted private key in the application-data folder.
+
+Before login can work, manually review/apply `backend/device_auth_schema.sql`. It assumes the database table is named `authorised_devices`. Launch the desktop client once, open “Show device details for administrator provisioning,” and insert its public key into the matching `authorised_devices.device_public_key` row. Do not copy or export the private key. There is no public enrollment endpoint or owner portal in this repository.
+
+Before deploying the financial API additions, back up and manually review/apply `backend/migrations/001_financial_workflows.sql` in Neon. It adds complete rate-audit fields, inventory and sale cost-basis data, override audit records, and a unique logbook-source index. The migration intentionally stops if duplicate source references exist. Apply migrations during a controlled deployment; the backend never runs them automatically. Provision owner terminals by setting `authorised_devices.role = 'OWNER'`; normal terminals remain `TERMINAL`.
 
 ## Install and run locally
+
+The frontend manifest now declares Electron. Because the lockfile could not be regenerated in this environment, run `npm install` in `frontend/` first; this resolves the declared Electron dependency and synchronizes `package-lock.json`.
 
 Open two terminals from the repository root.
 
@@ -41,6 +47,7 @@ Open two terminals from the repository root.
 ```sh
 cd backend
 npm install
+npm test
 node server.js
 ```
 
@@ -54,7 +61,16 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. Use the “Authenticate terminal” button, then test the rate, customer, search, and payment forms. A matching active device must exist in the database, and the frontend's configured device identifier must match it.
+In a third terminal, start the desktop shell while Vite is running:
+
+```powershell
+cd frontend
+$env:GOLD_DEVICE_GUID = "your-admin-assigned-device-guid"
+$env:GOLD_API_URL = "http://localhost:4000"
+npm run desktop:dev
+```
+
+Use the “Authenticate terminal” button, then test rates, customers, billing, buybacks, debt settlement, expenses, logbook, and analytics. The backend must be running, auth schema and finance migration applied, device public key provisioned, and opening inventory configured by an owner before sales can be made.
 
 ## Available frontend commands
 
@@ -66,8 +82,12 @@ Run these from `frontend/`:
 | `npm run build` | Builds the frontend into Vite's generated output directory. |
 | `npm run preview` | Serves the built frontend locally for preview. |
 | `npm run lint` | Runs ESLint. |
+| `npm run desktop:dev` | Opens the Electron shell against Vite at `http://localhost:5173`. |
+| `npm run desktop` | Opens the built Electron app using `goldline://app`. Run `npm run build` first. |
 
-The backend's `npm test` is only a placeholder that prints “Error: no test specified” and exits unsuccessfully. No application-specific automated tests were found.
+The backend uses Node's built-in test runner: `npm test` covers money/gold calculations, the cash-ledger model, device signatures, weighted-average inventory, analytics arithmetic, and frontend finance previews. A packaged distributable/installer is not configured yet.
+
+For a production build, set `VITE_API_BASE_URL` to the HTTPS API endpoint before `npm run build`, then configure the same origin in runtime `GOLD_API_URL`. Terminate TLS 1.3 at the cloud ingress and set `CORS_ORIGINS` to `goldline://app`. The backend itself listens on HTTP and must not be exposed directly to the public internet.
 
 ## Folder structure
 
@@ -75,12 +95,20 @@ The backend's `npm test` is only a placeholder that prints “Error: no test spe
 .
 ├── backend/
 │   ├── server.js             # Express routes and device authentication
+│   ├── device-auth.js        # Ed25519 proof verification
+│   ├── gold-calculations.js  # Exact weight/money formula helpers
+│   ├── cash-ledger.js        # In-memory cash-flow domain model
+│   ├── device_auth_schema.sql # Manual device public-key/challenge schema
+│   └── test/                 # Node built-in unit tests
 │   ├── db.js                 # PostgreSQL connection pool
 │   ├── package.json          # Backend dependencies
 │   └── .env                  # Local-only configuration; do not commit
 ├── frontend/
 │   ├── index.html            # Vite HTML shell
 │   ├── vite.config.js        # React/Vite setup
+│   ├── electron/
+│   │   ├── main.cjs          # Secure BrowserWindow, OS key storage, print IPC
+│   │   └── preload.cjs       # Minimal isolated IPC bridge
 │   ├── eslint.config.js      # Frontend lint configuration
 │   └── src/
 │       ├── main.jsx          # React bootstrap
@@ -89,7 +117,7 @@ The backend's `npm test` is only a placeholder that prints “Error: no test spe
 │       ├── validation.js     # Shared numeric input validation
 │       ├── components/       # Shared form, shell, feedback, toast, skeleton UI
 │       ├── hooks/            # In-memory form state and debounced customer search
-│       ├── pages/            # Device login and three API-backed work areas
+│       ├── pages/            # Device login and authenticated finance work areas
 │       ├── App.css           # Shell and shared component styles
 │       ├── pages.css         # Rates, customer, and payment view styles
 │       ├── index.css         # Global styles and design tokens

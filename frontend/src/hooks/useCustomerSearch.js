@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../api.js';
 
-/** Search customers by phone after the operator pauses typing for 300 ms. */
-export function useCustomerSearch(token, deviceGuid, onAuthFailure) {
+/** Search customers by name or phone after the operator pauses for 300 ms. */
+export function useCustomerSearch(token, deviceGuid, onAuthFailure, onTokenRotated) {
+  const tokenRef = useRef(token);
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState({ status: 'idle', rows: [], error: '' });
   const updateQuery = useCallback((value) => {
@@ -13,18 +17,19 @@ export function useCustomerSearch(token, deviceGuid, onAuthFailure) {
   }, []);
 
   useEffect(() => {
-    const phone = query.trim();
-    if (!phone) return undefined;
+    const search = query.trim();
+    if (!search) return undefined;
 
     let active = true;
     const timer = window.setTimeout(async () => {
       if (!active) return;
       setResult({ status: 'loading', rows: [], error: '' });
       try {
-        const rows = await apiRequest(`/api/customers/search?phone=${encodeURIComponent(phone)}`, {
-          token,
+        const rows = await apiRequest(`/api/customers/search?q=${encodeURIComponent(search)}`, {
+          token: tokenRef.current,
           deviceGuid,
           onAuthFailure,
+          onTokenRotated,
         });
         if (active) setResult({ status: rows.length ? 'success' : 'empty', rows, error: '' });
       } catch (error) {
@@ -36,7 +41,7 @@ export function useCustomerSearch(token, deviceGuid, onAuthFailure) {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [query, token, deviceGuid, onAuthFailure]);
+  }, [query, deviceGuid, onAuthFailure, onTokenRotated]);
 
   return { query, setQuery: updateQuery, ...result };
 }

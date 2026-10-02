@@ -2,7 +2,7 @@
 
 ## Status: seed implementation blocked on executable schema and safe test markers
 
-This plan reports what can be established from checked-in code and the owner-provided ERD at [database_schema.md](./database_schema.md). That ERD is a reference, not verified live DDL. A seed script is **not included yet**: seeding Neon without confirmed constraints and a safe test marker could overwrite today's business data, create payment/customer balances that do not reconcile, or make destructive cleanup unsafe.
+This plan combines checked-in code, the owner-provided ERD, and read-only live-schema metadata supplied by the owner in [live_schema.md](./live_schema.md). A seed script is **not included**: seeding a shared Neon database without an isolated branch and safe test marker could affect business balances or make cleanup unsafe.
 
 ## A. Database connection
 
@@ -11,20 +11,20 @@ This plan reports what can be established from checked-in code and the owner-pro
 - **Connection settings read by code:** `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`. `backend/.env` exists in the local workspace and is ignored by Git.
 - **Connection string:** the backend does not read a single `DATABASE_URL` connection string. Its pool is configured from separate environment variables. Secret values are intentionally not reproduced in this report or logs.
 - **Connection pooling:** the application uses a `pg.Pool`. Neon hosting is suggested by a source comment but is not independently confirmed by deployment configuration.
-- **Schema source:** no executable checked-in migration, schema dump, or database setup file was found. The owner-provided reference ERD is documented, but no live database schema was queried during this scan.
+- **Schema source:** the owner supplied live column, key, and enum query results. The checked-in finance migration is additive and manual; it is not a complete schema dump and has not been applied to Neon.
 
 ## B. Entity inventory from code evidence
 
-The names below are the tables explicitly named by SQL in `backend/server.js`. Types and constraints are unavailable without the actual database DDL.
+The names below are tables explicitly named by SQL in the backend. Confirmed types, keys, and enum labels are recorded in [live_schema.md](./live_schema.md); use it to qualify the summarized evidence here.
 
 | Table | Fields observed in queries | Type / constraints / notes |
 |---|---|---|
-| `authorized_devices` | `device_id`, `device_guid`, `device_name`, `is_active` | Types, required fields, defaults, key and unique constraints are unknown. Login and protected-request checks depend on active device records. Do not seed or activate devices without explicit authorization. |
+| `authorised_devices` | `device_id`, `device_guid`, `device_name`, `is_active` | Types, required fields, defaults, key and unique constraints are unknown. Login and protected-request checks depend on active device records. Do not seed or activate devices without explicit authorization. |
 | `daily_gold_rates` | `rate_date`, `rate_999_sell`, `rate_49_sell`, `rate_999_buy`, `rate_fine_gatti_buy` | Types and constraints are unknown. `rate_date` must have a unique constraint/index because the upsert uses `ON CONFLICT (rate_date)`. No nullable/default information is present. |
 | `customers` | `customer_id`, `full_name`, `phone_number`, `address`, `pending_balance`, `created_at` | Types/defaults are unknown. The create route writes only `full_name`, `phone_number`, `address`; search reads `created_at`; payment reads/updates `pending_balance`. A uniqueness violation is treated as duplicate phone, but the exact unique constraint is unknown. |
 | `debt_payments` | `receipt_number`, `customer_id`, `amount_paid`, `payment_mode`, `notes` | Types/defaults are unknown. Payment inserts these fields. `customer_id` logically points to `customers.customer_id`, but a database FK is not confirmed. A payment date column is not used by the backend insert. |
 
-No enum types, triggers, generated columns, or check constraints can be established from application SQL. Their absence cannot be inferred without inspecting PostgreSQL catalogs.
+The supplied metadata confirms enum labels and key constraints. Triggers, generated columns, and every check constraint should still be verified against the target branch before writing a seed tool.
 
 ## C. Dependency graph and insert order
 
@@ -34,22 +34,22 @@ The application establishes one **logical** dependency:
 customers.customer_id  <--  debt_payments.customer_id
 ```
 
-The actual foreign-key declaration is unknown. If confirmed in the database, insert customers before payments and clean payments before customers. `authorized_devices` and `daily_gold_rates` are independent in the observed SQL.
+The actual foreign-key declaration is unknown. If confirmed in the database, insert customers before payments and clean payments before customers. `authorised_devices` and `daily_gold_rates` are independent in the observed SQL.
 
 `--only customers,payments` would still need dependency-aware behavior: payment seeding requires existing test customers, and cleanup must only remove test payments before their test customers. This is not implemented until test-record marking and actual constraints are known.
 
 ## D. Business rules evidenced in backend code
 
-- Device login accepts a `device_guid`, looks for one active row in `authorized_devices`, and issues a 12-hour JWT. The application must not generate enabled test devices as an incidental data task.
+- Device login requires an active device row with a provisioned Ed25519 public key, a one-use 60-second challenge, and a 5-minute JWT. Never generate or activate test devices incidentally; public keys are deployment credentials.
 - Protected API access checks JWT validity, matching `device_guid`, and current `is_active`.
 - Gold rates write to database `CURRENT_DATE` and upsert by `rate_date`. The application has no route to insert historical rate dates, and `ON CONFLICT` means overwriting an existing date is possible.
-- Rate values have no server-side required, positivity, unit, or range validation in the checked-in route.
+- Rate values are required positive decimal strings with at most 2 fractional places and a DECIMAL(12,2) maximum. Mid-day changes require an OWNER device and are audited.
 - Customer creation supplies only name, phone number, and address. PostgreSQL unique error code `23505` is converted to an “already registered” response; exact unique columns are unknown.
 - Customer search uses a partial phone match and returns the ten newest records.
 - Payment processing locks the customer row, subtracts `amount_paid` from `pending_balance`, inserts a payment row, and commits both actions in one transaction.
-- The payment endpoint has no server-side positive-amount, upper-bound, payment-mode, or overpayment validation.
-- Receipt numbers are application-generated for ordinary payments. Their maximum length and uniqueness constraint are unknown.
-- No payment timestamp is supplied to the insert, so payment-date generation/default behavior cannot be established from code.
+- Payment endpoint validates positive bounded amounts and supported enum modes; overpayment remains intentionally permitted.
+- Receipt numbers are application-generated and fit the confirmed `VARCHAR(30)` limit; uniqueness is enforced by the confirmed schema.
+- The payment date is assigned from the PostgreSQL business date within the transaction.
 - No validation/state machine, email, customer status, payment status, or rate-range rule beyond the behavior above is found.
 
 Requested generation values such as Indian names, `TEST_` name prefixes, 10-digit phones, rates of ₹65,000–₹85,000, payment amounts of ₹500–₹500,000, UTC dates, and UUID v4 IDs are **test-data requirements from the task**, not existing application rules. Several requested fields (email, test flags, payment date, and UUID keys) are not evidenced in the backend queries and must not be inserted without the real schema.
@@ -60,7 +60,7 @@ These are suggested planning counts only, not executable insert counts. The sche
 
 | Table | Min | Standard | Stress | Status |
 |---|---:|---:|---:|---|
-| `authorized_devices` | 0 | 0 | 0 | Intentionally excluded: test device enrollment grants API access. |
+| `authorised_devices` | 0 | 0 | 0 | Intentionally excluded: test device enrollment grants API access. |
 | `customers` | 10 | 100 | 1,000 | Proposed; schema and safe marker required. |
 | `daily_gold_rates` | 1 | 30 | 30 | Proposed; date uniqueness could collide with real rates; safe marker/isolated branch required. |
 | `debt_payments` | 25 | 500 | 5,000 | Proposed; needs real FK/date fields and balance reconciliation rules. |

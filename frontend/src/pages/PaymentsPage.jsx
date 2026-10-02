@@ -10,13 +10,14 @@ import { isValidTwoDecimalInput } from '../validation.js';
 const initialPayment = { amount_paid: '', payment_mode: 'CASH', notes: '' };
 
 /** Find a customer and record a debt payment using the transactional API endpoint. */
-export default function PaymentsPage({ token, deviceGuid, notify, onAuthFailure }) {
+export default function PaymentsPage({ token, deviceGuid, notify, onAuthFailure, onTokenRotated }) {
   const draft = useDraftForm(initialPayment);
-  const search = useCustomerSearch(token, deviceGuid, onAuthFailure);
+  const search = useCustomerSearch(token, deviceGuid, onAuthFailure, onTokenRotated);
   const [selected, setSelected] = useState(null);
   const [saving, setSaving] = useState(false);
   const [touched, setTouched] = useState(false);
   const [formError, setFormError] = useState('');
+  const [printError, setPrintError] = useState('');
   const [receipt, setReceipt] = useState(null);
   const amountError = touched && !draft.values.amount_paid.trim()
     ? 'Enter an amount.'
@@ -36,9 +37,10 @@ export default function PaymentsPage({ token, deviceGuid, notify, onAuthFailure 
         token,
         deviceGuid,
         onAuthFailure,
+        onTokenRotated,
         body: JSON.stringify({
           customer_id: selected.customer_id,
-          amount_paid: Number(draft.values.amount_paid),
+          amount_paid: draft.values.amount_paid,
           payment_mode: draft.values.payment_mode,
           notes: draft.values.notes.trim(),
         }),
@@ -56,6 +58,26 @@ export default function PaymentsPage({ token, deviceGuid, notify, onAuthFailure 
     }
   }
 
+  async function printPaymentReceipt() {
+    if (!window.goldline || !receipt) return;
+    setPrintError('');
+    try {
+      await window.goldline.printReceipt({
+        title: 'Customer debt payment',
+        lines: [
+          `Receipt: ${receipt.payment.receipt_number}`,
+          `Customer ID: ${receipt.payment.customer_id}`,
+          `Payment mode: ${receipt.payment.payment_mode}`,
+          `Starting balance: ${receipt.previous_balance}`,
+          `Amount paid: ${receipt.payment.amount_paid}`,
+        ],
+        total: `Remaining balance: ${receipt.updated_balance}`,
+      });
+    } catch (error) {
+      setPrintError(error.message);
+    }
+  }
+
   return (
     <section className="page-view" aria-labelledby="payments-title">
       <div className="page-heading">
@@ -66,12 +88,16 @@ export default function PaymentsPage({ token, deviceGuid, notify, onAuthFailure 
       {receipt && (
         <Feedback kind="success" title="Payment recorded">
           Receipt {receipt.payment.receipt_number} · Balance ₹{receipt.previous_balance} → ₹{receipt.updated_balance}
+          <div className="form-actions">
+            <button className="button button-secondary" type="button" onClick={printPaymentReceipt}>Print receipt</button>
+          </div>
         </Feedback>
       )}
+      {printError && <Feedback kind="error" title="Receipt could not be printed">{printError}</Feedback>}
       <div className="payment-layout">
         <section className="surface-card" aria-labelledby="select-customer-title">
-          <div className="card-heading"><span className="card-index">01</span><div><h2 id="select-customer-title">Select customer</h2><p>Search by phone to load the account balance.</p></div></div>
-          <FormField id="payment-search" label="Customer phone" hint="Search is debounced by 300 ms.">
+          <div className="card-heading"><span className="card-index">01</span><div><h2 id="select-customer-title">Select customer</h2><p>Search by name or phone to load the account balance.</p></div></div>
+          <FormField id="payment-search" label="Customer name or phone" hint="Search is debounced by 300 ms.">
             <input id="payment-search" type="search" inputMode="tel" autoComplete="off" value={search.query}
               onChange={(event) => { search.setQuery(event.target.value); setSelected(null); }} />
           </FormField>
@@ -117,7 +143,8 @@ export default function PaymentsPage({ token, deviceGuid, notify, onAuthFailure 
                 onChange={(event) => draft.setValues((current) => ({ ...current, payment_mode: event.target.value }))}>
                 <option value="CASH">Cash</option>
                 <option value="BANK_TRANSFER">Bank transfer</option>
-                <option value="CHEQUE">Cheque</option>
+                <option value="UPI">UPI</option>
+                <option value="CARD">Card</option>
               </select>
             </FormField>
             <FormField id="payment-notes" label="Note" hint="Optional receipt note.">

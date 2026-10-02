@@ -13,6 +13,18 @@ export default defineConfig([
       reactHooks.configs.flat.recommended,
       reactRefresh.configs.vite,
     ],
+    rules: {
+      'no-restricted-globals': ['error',
+        { name: 'localStorage', message: 'Do not persist application data in browser storage.' },
+        { name: 'sessionStorage', message: 'Keep client state in memory only.' },
+        { name: 'indexedDB', message: 'Do not persist application data in browser storage.' },
+      ],
+      'no-restricted-properties': ['error',
+        { object: 'window', property: 'localStorage', message: 'Do not persist application data in browser storage.' },
+        { object: 'window', property: 'sessionStorage', message: 'Keep client state in memory only.' },
+        { object: 'window', property: 'indexedDB', message: 'Do not persist application data in browser storage.' },
+      ],
+    },
     languageOptions: {
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },

@@ -1,15 +1,15 @@
-# Gold Trading Terminal
+# Kalash Gold Terminal
 
 ## What this project does
 
-This repository contains an early, browser-based gold-trading terminal. It is intended for a shop or counter operator who needs to authenticate an approved terminal, update the day's gold rates, register customers, find customers by phone number, and record payments against customer balances.
+This repository contains a gold-trading terminal with a React interface wrapped by Electron for desktop use. It supports approved-device sign-in, daily rates, customer accounts, sales billing, gold purchases and inventory, debt payments, categorized expenses, cash reconciliation, and profit reporting.
 
 The project has two parts:
 
 - A **frontend**, the web page the operator uses, built with React and Vite.
 - A **backend**, a Node.js service that checks the terminal's access token and reads or writes records in PostgreSQL.
 
-The application currently targets a backend at `http://localhost:4000`. The frontend includes a fixed device identifier in its code, and the backend currently accepts that identifier as the device-login credential. The app keeps its login token and form values in React memory, so they are lost when their view is closed or the page is reloaded. The repository describes itself in the interface as “Sprint 1”; deployment and production API coverage remain incomplete. An owner-provided reference ERD is preserved in [database_schema.md](./database_schema.md), but no executable migration is included.
+Development targets a backend at `http://localhost:4000`; packaged builds require an HTTPS API URL. Electron uses an administrator-assigned device GUID and an OS-encrypted Ed25519 private key for device proof. Customer, transaction, and session data remain in renderer memory; the encrypted device credential is intentionally stored through the OS credential facility. Financial workflows require the manually reviewed migration described in [live_schema.md](./live_schema.md); neither authentication nor finance migrations are run automatically. TLS/cloud deployment is external.
 
 ## Technology at a glance
 
@@ -29,10 +29,13 @@ The application currently targets a backend at `http://localhost:4000`. The fron
 
 - [Feature guide](./features.md) — what each screen/module does and how it behaves.
 - [Data model](./data_model.md) — owner-provided model, observed API usage, gaps, and data flow.
+- [Live Neon schema notes](./live_schema.md) — column types, enum values, keys, and constraints supplied from read-only Neon metadata queries.
 - [Owner-provided database schema](./database_schema.md) — supplied ERD retained as a project reference, not a migration.
-- [Authorized-device SQL reference](./authorised_devices_reference.sql) — owner-provided `authorized_devices` table and seed example, normalized to the confirmed table spelling; not a migration.
+- [Authorized-device SQL reference](./authorised_devices_reference.sql) — owner-provided `authorised_devices` table and seed example; reference only, not a migration.
+- [Device-auth column SQL](../backend/device_auth_schema.sql) — additive database change required for Ed25519 device proof; apply manually after review.
 - [API reference](./api_reference.md) — all implemented HTTP routes, inputs, outputs, and errors.
 - [Developer guide](./developer_guide.md) — local setup, configuration, folder layout, and conventions.
+- [US-01–US-11 verification matrix](./verification_matrix.md) — boundary cases, expected values, coverage, and remaining prerequisites.
 - [Project analysis](./analysis.md) — verified stack, API, data model, existing UI, and implementation gaps.
 - [Design system](./DESIGN.md) — proposed interface tokens and accessibility baseline.
 - [Open questions](./questions.md) — unresolved API, database, and business-rule decisions.
@@ -49,7 +52,7 @@ The application currently targets a backend at `http://localhost:4000`. The fron
 
 ## Project file catalog
 
-The descriptions below cover first-party project files and directories. Generated dependencies under either `node_modules/` are intentionally not cataloged file-by-file; they are installed third-party package contents, not application source. No executable SQL schema/migration, backend test suite, or root-level README was present in the project inventory. The owner-provided reference ERD is cataloged below.
+The descriptions below cover first-party project files and directories. Generated dependencies under either `node_modules/` are intentionally not cataloged file-by-file; they are installed third-party package contents, not application source. Manual SQL schema changes, backend tests, and the owner-provided reference ERD are cataloged below.
 
 ### Repository root
 
@@ -57,16 +60,42 @@ The descriptions below cover first-party project files and directories. Generate
 |---|---|
 | `.gitignore` | Excludes dependency directories, environment files, generated builds, logs, and Git ignore files. |
 | `backend/` | Node.js API and PostgreSQL connection code. |
-| `frontend/` | React web application, its build configuration, and static assets. |
+| `frontend/` | React interface, Vite build configuration, Electron desktop host, and static assets. |
 | `docs/` | This documentation set and its Mermaid diagrams. |
 
 ### `backend/`
 
 | Path | Purpose |
 |---|---|
-| `backend/server.js` | Express server, device-token middleware, and routes for rates, customers, and payments. |
+| `backend/server.js` | Express application, CORS setup, authentication middleware, and API route registration. |
+| `backend/auth-routes.js` | Challenge-response terminal login and short-lived JWT issuance. |
+| `backend/device-middleware.js` | Protected-request device checks and token rotation. |
+| `backend/routes/` | Authentication-protected rates, customer, payment, and finance API implementations. |
+| `backend/routes/sales.js` | Atomic sales invoice, customer debt, inventory cost, price override, and cash-inflow workflow. |
+| `backend/routes/purchases.js` | Customer buyback voucher, inventory intake, weighted-average cost, and cash outflow. |
+| `backend/routes/expenses.js` | Office/household expenses and cash-only drawer postings. |
+| `backend/routes/logbook.js` | Daily logbook summary, cash entries, reconciliation, and close. |
+| `backend/routes/analytics.js` | Date-range revenue, cost basis, profit, and average calculations. |
+| `backend/routes/inventory.js` | Inventory balance and one-time owner opening stock configuration. |
+| `backend/finance/` | Shared exact validation, transactions, inventory valuation, logbook posting, and error helpers. |
+| `backend/migrations/001_financial_workflows.sql` | Manual additive migration for inventory, cost basis, audit fields, override audit, and unique logbook-source protection. |
+| `backend/routes/gold-rates.js` | Read and upsert daily gold rates. |
+| `backend/routes/customers.js` | Register customers and search by name or phone substring. |
+| `backend/routes/payments.js` | Record a customer debt payment and update its balance in one transaction. |
 | `backend/db.js` | Loads environment configuration and creates the PostgreSQL connection pool. |
-| `backend/package.json` | Backend package metadata, dependencies, and the currently placeholder test script. |
+| `backend/device-auth.js` | Creates one-time challenges and verifies Ed25519 signatures. |
+| `backend/money.js` | Exact integer-cent parsing and formatting. |
+| `backend/gold-calculations.js` | Exact 999/49 sale and 999/Gatti purchase calculations. |
+| `backend/cash-ledger.js` | In-memory cash-flow domain model and day-closing arithmetic. |
+| `backend/device_auth_schema.sql` | Manual additive key/challenge schema; not run automatically. |
+| `backend/test/` | Node built-in tests for calculations, cash flow, device signatures, inventory, analytics and frontend previews. |
+| `backend/test/money.test.js` | Money parsing and formatting boundary tests. |
+| `backend/test/gold-calculations.test.js` | Gold weight, purity, and payout calculation tests. |
+| `backend/test/cash-ledger.test.js` | In-memory cash-flow and daily close model tests. |
+| `backend/test/device-auth.test.js` | Device challenge signature verification tests. |
+| `backend/test/finance.test.js` | Inventory carrying-cost allocation and exact analytics arithmetic tests. |
+| `backend/test/frontend-financial-math.test.js` | Frontend preview math tests using Node's built-in test runner. |
+| `backend/package.json` | Backend dependencies and `node --test` script. |
 | `backend/package-lock.json` | Locks the backend's npm dependency resolution. |
 | `backend/.env` | Local database/server secrets and settings, ignored by Git. Values are intentionally not reproduced in documentation. The expected PostgreSQL variable names are listed in the developer guide. |
 | `backend/node_modules/` | Installed backend dependencies; generated/third-party files are not project source. |
@@ -76,8 +105,8 @@ The descriptions below cover first-party project files and directories. Generate
 | Path | Purpose |
 |---|---|
 | `frontend/.gitignore` | Frontend-local ignore rules. |
-| `frontend/package.json` | Frontend scripts and React/Vite/lint dependencies. |
-| `frontend/package-lock.json` | Locks the frontend's npm dependency resolution. |
+| `frontend/package.json` | Frontend scripts, React/Vite/lint dependencies, and Electron 44 declaration. |
+| `frontend/package-lock.json` | Existing frontend dependency lock; Electron addition still needs `npm install` to synchronize it. |
 | `frontend/vite.config.js` | Enables Vite's React plugin; no API proxy or deployment configuration is set. |
 | `frontend/eslint.config.js` | ESLint settings for JavaScript, JSX, React Hooks, and React refresh. |
 | `frontend/index.html` | Browser HTML shell and the mount point for the React app. |
@@ -86,7 +115,7 @@ The descriptions below cover first-party project files and directories. Generate
 | `frontend/src/` | Frontend application code and styles. |
 | `frontend/src/main.jsx` | Creates the React root and renders `App` inside `StrictMode`. |
 | `frontend/src/App.jsx` | Terminal session state, view selection, and authenticated app shell composition. |
-| `frontend/src/api.js` | Fetch-based API helper, API base URL, and configured device identifier. |
+| `frontend/src/api.js` | Fetch-based API helper, HTTPS production guard, and in-memory token rotation handling. |
 | `frontend/src/validation.js` | Shared finite-number and two-decimal-place input validation. |
 | `frontend/src/components/AppShell.jsx` | Top navigation, device identity, sign-out, and content layout. |
 | `frontend/src/components/FormField.jsx` | Labeled control wrapper with accessible hint and error wiring. |
@@ -95,10 +124,17 @@ The descriptions below cover first-party project files and directories. Generate
 | `frontend/src/components/Toast.jsx` | Temporary success/error notification and dismiss control. |
 | `frontend/src/hooks/useDraftForm.js` | React-memory-only form state, discarded when its view unmounts. |
 | `frontend/src/hooks/useCustomerSearch.js` | Debounced customer search through the existing phone-search route. |
-| `frontend/src/pages/LoginPage.jsx` | Device sign-in screen. |
+| `frontend/src/pages/LoginPage.jsx` | Challenge-based device sign-in and administrator-visible public-key details. |
 | `frontend/src/pages/RatesPage.jsx` | Load, validate, and save today's rates. |
 | `frontend/src/pages/CustomersPage.jsx` | Customer registration and phone search. |
 | `frontend/src/pages/PaymentsPage.jsx` | Customer selection and transactional payment submission. |
+| `frontend/src/pages/SalesPage.jsx` | Billing with rate-based math, customer debt breakdown, and owner override. |
+| `frontend/src/pages/PurchasesPage.jsx` | Buyback calculations, inventory intake, and opening-stock setup. |
+| `frontend/src/pages/ExpensesPage.jsx` | Office and household expense entry. |
+| `frontend/src/pages/LogbookPage.jsx` | Cash-flow review and day close/reconciliation. |
+| `frontend/src/pages/AnalyticsPage.jsx` | Daily/weekly/monthly/custom profit reporting. |
+| `frontend/src/financial-math.js` | BigInt-based client previews matching backend gold math. |
+| `frontend/src/finance.css` | Responsive styling for the added financial views. |
 | `frontend/src/App.css` | Global shell, controls, shared components, and responsive styling. |
 | `frontend/src/pages.css` | Rates, customer, and payment page layouts and responsive styles. |
 | `frontend/src/index.css` | Global starter styles and `--terminal-*` design tokens. |
@@ -106,6 +142,10 @@ The descriptions below cover first-party project files and directories. Generate
 | `frontend/src/assets/hero.png` | Static image asset; no application behavior is attached to it in the inspected component. |
 | `frontend/src/assets/react.svg` | React logo asset from the starter template. |
 | `frontend/src/assets/vite.svg` | Vite logo asset from the starter template. |
+| `frontend/electron/main.cjs` | Hardened Electron window, ephemeral session, custom protocol, and IPC wiring. |
+| `frontend/electron/device-credentials.cjs` | OS-encrypted Ed25519 terminal key generation, storage, and challenge signing. |
+| `frontend/electron/receipt-printer.cjs` | Validates receipt content and prints through the standard OS print driver. |
+| `frontend/electron/preload.cjs` | Context-isolated IPC methods exposed to the React renderer. |
 | `frontend/public/` | Files served directly from the site root by Vite. |
 | `frontend/public/favicon.svg` | Browser tab icon. |
 | `frontend/public/icons.svg` | Static SVG icon resource. |
@@ -117,8 +157,11 @@ The descriptions below cover first-party project files and directories. Generate
 | `docs/README.md` | Plain-English project overview, documentation contents, and project file catalog. |
 | `docs/features.md` | Feature behavior, code locations, inputs/outputs, limitations, and connections. |
 | `docs/data_model.md` | Owner-provided data model, implementation mapping, schema gaps, and data flow. |
+| `docs/live_schema.md` | Live-schema metadata, enum values, confirmed accounting rules, and additive migration requirements. |
 | `docs/database_schema.md` | Owner-provided full ER diagram retained for future reference, with implementation status and outstanding clarifications. |
-| `docs/authorised_devices_reference.sql` | Owner-provided `authorized_devices` DDL and seed, saved as a non-executable reference. |
+| `docs/authorised_devices_reference.sql` | Owner-provided `authorised_devices` DDL and seed, saved as a non-executable reference. |
+| `backend/device_auth_schema.sql` | Manual `device_public_key` column addition required by challenge-response authentication; not auto-applied. |
+| `docs/verification_matrix.md` | Boundary cases, precise expected values, current implementation coverage, and deployment prerequisites for US-01–US-11. |
 | `docs/api_reference.md` | Implemented API routes, headers, request/response examples, and errors. |
 | `docs/developer_guide.md` | Local setup, environment settings, commands, structure, and coding patterns. |
 | `docs/analysis.md` | Phase 1 technical findings and implementation gaps. |

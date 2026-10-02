@@ -1,6 +1,8 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000').replace(/\/$/, '');
 
-export const DEVICE_GUID = 'HW-MAC-7F-88-99-00-11-22';
+if (import.meta.env.PROD && new URL(API_BASE_URL).protocol !== 'https:') {
+  throw new Error('Packaged terminals require an HTTPS API endpoint.');
+}
 
 /** HTTP error carrying the backend status code and its actionable error message. */
 export class ApiError extends Error {
@@ -18,7 +20,14 @@ export class ApiError extends Error {
  * @returns {Promise<unknown>} Parsed JSON response.
  */
 export async function apiRequest(path, options = {}) {
-  const { token, deviceGuid, onAuthFailure, headers: suppliedHeaders, ...requestOptions } = options;
+  const {
+    token,
+    deviceGuid,
+    onAuthFailure,
+    onTokenRotated,
+    headers: suppliedHeaders,
+    ...requestOptions
+  } = options;
   const headers = new Headers(suppliedHeaders || {});
   if (requestOptions.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (token) headers.set('Authorization', ['Bearer', token].join(' '));
@@ -30,6 +39,8 @@ export async function apiRequest(path, options = {}) {
   } catch {
     throw new Error(`Could not reach the server at ${API_BASE_URL}. Check the backend and network connection.`);
   }
+  const rotatedToken = response.headers.get('X-Access-Token');
+  if (token && rotatedToken && onTokenRotated) onTokenRotated(rotatedToken);
 
   let data;
   try {

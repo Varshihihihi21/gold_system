@@ -1,18 +1,23 @@
 flowchart LR
-    Operator[Shop operator] --> Browser
-    subgraph Frontend["Frontend: React + Vite"]
-        Browser[Browser terminal UI]
+    Operator[Shop operator] --> Desktop
+    subgraph Frontend["Desktop frontend: Electron + React + Vite"]
+        Desktop[Electron BrowserWindow]
         State[React state<br/>token and form data]
-        Browser <--> State
+        Main[Electron main process<br/>safeStorage, IPC, print driver]
+        Preload[Context-isolated preload]
+        Desktop <--> State
+        Desktop --> Preload --> Main
     end
-    Browser -->|HTTP JSON<br/>localhost:4000| Server
+    Desktop -->|HTTPS JSON in production<br/>HTTP localhost in development| Server
     subgraph Backend["Backend: Node.js + Express"]
         Server[Express routes]
-        Middleware[JWT and device checks]
+        Middleware[Short-lived JWT and active-device checks]
+        DeviceAuth[Challenge-response login]
         Pool[PostgreSQL connection pool]
         Server --> Middleware
         Middleware --> Pool
         Server --> Pool
+        Server --> DeviceAuth --> Pool
     end
     Pool -->|SQL queries and transactions| PostgreSQL[(PostgreSQL database)]
-    PostgreSQL --- Tables[authorized_devices<br/>daily_gold_rates<br/>customers<br/>debt_payments]
+    PostgreSQL --- Tables[authorised_devices<br/>device_auth_challenges<br/>daily_gold_rates<br/>customers<br/>debt_payments]

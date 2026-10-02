@@ -9,9 +9,9 @@ import { apiRequest } from '../api.js';
 const initialCustomer = { full_name: '', phone_number: '', address: '' };
 
 /** Register a customer and search existing customers by partial phone number. */
-export default function CustomersPage({ token, deviceGuid, notify, onAuthFailure }) {
+export default function CustomersPage({ token, deviceGuid, notify, onAuthFailure, onTokenRotated }) {
   const { values, setValues, reset, dirty } = useDraftForm(initialCustomer);
-  const search = useCustomerSearch(token, deviceGuid, onAuthFailure);
+  const search = useCustomerSearch(token, deviceGuid, onAuthFailure, onTokenRotated);
   const [saving, setSaving] = useState(false);
   const [touched, setTouched] = useState({});
   const [formError, setFormError] = useState('');
@@ -33,6 +33,7 @@ export default function CustomersPage({ token, deviceGuid, notify, onAuthFailure
         token,
         deviceGuid,
         onAuthFailure,
+        onTokenRotated,
         body: JSON.stringify({
           full_name: values.full_name.trim(),
           phone_number: values.phone_number.trim(),
