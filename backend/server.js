@@ -3,10 +3,24 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
 
-const app = express();
-const JWT_SECRET = process.env.JWT_SECRET || 'gold_secret_key_123';
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be configured with a strong, unique value before the API can start.');
+}
 
-app.use(cors({ origin: true, credentials: true }));
+const app = express();
+const JWT_SECRET = process.env.JWT_SECRET;
+const allowedOrigins = new Set(
+  (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+
+app.use(cors({
+  origin(origin, callback) {
+    callback(null, !origin || allowedOrigins.has(origin));
+  },
+}));
 app.use(express.json());
 
 // Hardware Verification Middleware

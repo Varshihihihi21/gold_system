@@ -1,0 +1,18 @@
+flowchart LR
+    Operator[Shop operator] --> Browser
+    subgraph Frontend["Frontend: React + Vite"]
+        Browser[Browser terminal UI]
+        State[React state<br/>token and form data]
+        Browser <--> State
+    end
+    Browser -->|HTTP JSON<br/>localhost:4000| Server
+    subgraph Backend["Backend: Node.js + Express"]
+        Server[Express routes]
+        Middleware[JWT and device checks]
+        Pool[PostgreSQL connection pool]
+        Server --> Middleware
+        Middleware --> Pool
+        Server --> Pool
+    end
+    Pool -->|SQL queries and transactions| PostgreSQL[(PostgreSQL database)]
+    PostgreSQL --- Tables[authorized_devices<br/>daily_gold_rates<br/>customers<br/>debt_payments]

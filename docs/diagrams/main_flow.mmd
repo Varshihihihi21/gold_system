@@ -1,0 +1,26 @@
+flowchart TD
+    A[Open terminal page] --> B{Token in current page memory?}
+    B -- No --> C[Operator selects Authenticate Hardware]
+    C --> D[POST device ID to device-login]
+    D --> E{Device exists and is active?}
+    E -- No --> F[Show sign-in error]
+    E -- Yes --> G[Return 12-hour token]
+    G --> H[Keep token in React state]
+    B -- Yes --> H
+    H --> I[Show terminal modules]
+    I --> J{Operator action}
+    J --> K[Save today's rates]
+    J --> L[Register customer]
+    J --> M[Search phone and select customer]
+    M --> N[Submit debt payment]
+    K --> O[Protected API checks token and device]
+    L --> O
+    M --> O
+    N --> O
+    O --> P{Authorized?}
+    P -- No --> Q[Show request error]
+    P -- Yes --> R[Read or update PostgreSQL]
+    R --> S[Return JSON result]
+    S --> T[Update page status/results]
+    R -. Payment error .-> U[Rollback payment transaction]
+    U --> Q
