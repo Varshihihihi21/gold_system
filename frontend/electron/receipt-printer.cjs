@@ -23,6 +23,10 @@ async function printReceipt(receipt, partition) {
   </style><h2>${safeHtml(receipt.title)}</h2>${lines}${total}`;
   const printWindow = new BrowserWindow({
     show: false,
+    width: 460,
+    height: 760,
+    title: receipt.title,
+    autoHideMenuBar: true,
     webPreferences: {
       partition,
       contextIsolation: true,
@@ -33,6 +37,8 @@ async function printReceipt(receipt, partition) {
   });
   try {
     await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    printWindow.show();
+    printWindow.focus();
     await new Promise((resolve, reject) => {
       printWindow.webContents.print({ silent: false, printBackground: false }, (success, reason) => {
         if (success) resolve();

@@ -12,13 +12,15 @@ const moneyCents = (value) => {
 };
 
 /** Build an invoice using locked daily rates and backend price validation. */
-export default function SalesPage({ token, deviceGuid, role, notify, onAuthFailure, onTokenRotated }) {
+export default function SalesPage({ token, deviceGuid, notify, onAuthFailure, onTokenRotated }) {
   const [rates, setRates] = useState(null);
   const [rateError, setRateError] = useState('');
   const [customer, setCustomer] = useState(null);
   const [items, setItems] = useState([emptyLine()]);
   const [cash, setCash] = useState('');
   const [override, setOverride] = useState(false);
+  const [ownerPin, setOwnerPin] = useState('');
+  const [printError, setPrintError] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -48,6 +50,7 @@ export default function SalesPage({ token, deviceGuid, role, notify, onAuthFailu
     setResult(null);
     if (!customer) return setError('Select a customer before creating the invoice.');
     if (!rates) return setError('Today’s gold rates must be available before billing.');
+    if (override && !ownerPin) return setError('Enter the owner PIN/password to approve a price override.');
     const requestItems = items.map((item, index) => ({
       category: item.category,
       actual_weight_grams: item.actual_weight_grams,
@@ -65,18 +68,42 @@ export default function SalesPage({ token, deviceGuid, role, notify, onAuthFailu
           items: requestItems,
           cash_received: cash || '0.00',
           owner_override: override,
+          owner_pin: ownerPin,
         }),
       });
       setResult(response);
       setItems([emptyLine()]);
       setCash('');
       setOverride(false);
+      setOwnerPin('');
       setCustomer(null);
       notify(`Invoice ${response.invoice.invoice_number} recorded.`);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function printInvoice() {
+    if (!window.goldline || !result) return;
+    setPrintError('');
+    try {
+      await window.goldline.printReceipt({
+        title: 'Kalash Gold sales invoice',
+        lines: [
+          `Invoice: ${result.invoice.invoice_number}`,
+          `Customer: ${result.customer_name} · ${result.customer_phone}`,
+          ...result.items.map((item, index) =>
+            `${index + 1}. ${item.category} gold · ${item.actual_weight_grams} g · ₹${item.line_total}`),
+          `Previous pending balance: ₹${result.previous_balance}`,
+          `Current purchase amount: ₹${result.current_bill}`,
+          `Payment received today: ₹${result.cash_paid_today}`,
+        ],
+        total: `Revised net pending balance: ₹${result.updated_balance}`,
+      });
+    } catch (printFailure) {
+      setPrintError(printFailure.message);
     }
   }
 
@@ -89,8 +116,12 @@ export default function SalesPage({ token, deviceGuid, role, notify, onAuthFailu
       {result && <Feedback kind="success" title="Invoice recorded">
         {result.invoice.invoice_number} · Previous balance ₹{result.previous_balance} · Bill ₹{result.invoice.total_amount}
         · Cash ₹{result.cash_paid_today} · Remaining debt ₹{result.updated_balance}
+        <div className="form-actions">
+          <button className="button button-secondary" type="button" onClick={printInvoice}>Print invoice</button>
+        </div>
       </Feedback>}
       {error && <Feedback kind="error" title="Invoice not saved">{error}</Feedback>}
+      {printError && <Feedback kind="error" title="Invoice could not be printed">{printError}</Feedback>}
       <form className="surface-card stacked-form" onSubmit={submit}>
         <FinanceCustomerPicker {...{ token, deviceGuid, onAuthFailure, onTokenRotated }} selected={customer} onSelect={setCustomer} />
         <div className="finance-lines">
@@ -131,8 +162,12 @@ export default function SalesPage({ token, deviceGuid, role, notify, onAuthFailu
         <FormField id="sale-cash" label="Cash received today (₹)" hint="Only cash received is posted to the physical cash logbook.">
           <input id="sale-cash" type="number" min="0" step="0.01" value={cash} onChange={(event) => setCash(event.target.value)} required />
         </FormField>
-        {role === 'OWNER' && <label className="checkbox-field"><input type="checkbox" checked={override} onChange={(event) => setOverride(event.target.checked)} />
-          Owner-authorized price override (audited)</label>}
+        <label className="checkbox-field"><input type="checkbox" checked={override} onChange={(event) => setOverride(event.target.checked)} />
+          Request owner price override (audited)</label>
+        {override && <FormField id="sales-owner-pin" label="Owner PIN/password" required>
+          <input id="sales-owner-pin" type="password" autoComplete="current-password" value={ownerPin}
+            onChange={(event) => setOwnerPin(event.target.value)} required />
+        </FormField>}
         <div className="form-actions"><span className="draft-label">Pending amount adds to customer debt.</span>
           <button className="button button-primary" type="submit" disabled={busy || !rates}>{busy ? 'Saving invoice…' : 'Create invoice'}</button></div>
       </form>

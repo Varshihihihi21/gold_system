@@ -97,7 +97,7 @@ export default function PaymentsPage({ token, deviceGuid, notify, onAuthFailure,
       <div className="payment-layout">
         <section className="surface-card" aria-labelledby="select-customer-title">
           <div className="card-heading"><span className="card-index">01</span><div><h2 id="select-customer-title">Select customer</h2><p>Search by name or phone to load the account balance.</p></div></div>
-          <FormField id="payment-search" label="Customer name or phone" hint="Search is debounced by 300 ms.">
+          <FormField id="payment-search" label="Customer name, phone, or ID" hint="Search is debounced by 300 ms.">
             <input id="payment-search" type="search" inputMode="tel" autoComplete="off" value={search.query}
               onChange={(event) => { search.setQuery(event.target.value); setSelected(null); }} />
           </FormField>

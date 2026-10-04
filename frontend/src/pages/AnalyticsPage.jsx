@@ -53,8 +53,8 @@ export default function AnalyticsPage({ token, deviceGuid, onAuthFailure, onToke
 
   return (
     <section className="page-view" aria-labelledby="analytics-title">
-      <div className="page-heading"><div><p className="eyebrow">REPORTING / COST BASIS</p><h1 id="analytics-title">Profit analytics</h1>
-        <p>Sales cost is recognized from the weighted-average fine-gold inventory at sale time.</p></div></div>
+      <div className="page-heading"><div><p className="eyebrow">REPORTING / PERIOD PROFIT</p><h1 id="analytics-title">Profit analytics</h1>
+        <p>Profit subtracts purchases recorded in the selected period, then office costs and optionally household withdrawals.</p></div></div>
       <section className="surface-card analytics-filters">
         <FormField id="analytics-period" label="Reporting period">
           <select id="analytics-period" value={period} onChange={(event) => changePeriod(event.target.value)}>
@@ -74,20 +74,16 @@ export default function AnalyticsPage({ token, deviceGuid, onAuthFailure, onToke
       {error && <Feedback kind="error" title="Analytics unavailable">{error}</Feedback>}
       {loading ? <section className="surface-card"><Skeleton rows={5} /></section> : report && (
         <>
-          {!report.complete && <Feedback kind="warning" title="Profit is incomplete">
-            {report.missing_cost_items} historical sale item(s) have no saved cost basis. Profit is withheld rather than treating missing costs as zero.
-          </Feedback>}
           <section className="cash-summary analytics-summary" aria-label="Profit results">
             <Metric label="Sales revenue" value={report.sales_revenue} />
-            <Metric label="Cost of goods sold" value={report.cost_of_goods_sold ?? 'Incomplete'} />
+            <Metric label="Purchase costs" value={report.purchase_costs} />
             <Metric label="Gross profit" value={report.gross_profit ?? 'Incomplete'} />
             <Metric label="Office expenses" value={report.office_expenses} />
             <Metric label="Operating profit" value={report.operating_profit ?? 'Incomplete'} />
             <Metric label="Household expenses" value={report.household_expenses} />
             <Metric label="Net retained profit" value={report.net_retained_profit ?? 'Incomplete'} />
-            <Metric label={`Daily average · ${report.operating_days} operating days`} value={report.daily_average_profit ?? '—'} />
+            <Metric label={`Daily average · ${report.period_days} calendar days`} value={report.daily_average_profit ?? '—'} />
           </section>
-          <p className="field-hint">Purchases during this period: ₹{report.purchases_in_period}. Purchases add inventory cost; cost is expensed when inventory is sold.</p>
         </>
       )}
     </section>

@@ -8,7 +8,7 @@ export default function FinanceCustomerPicker({ token, deviceGuid, onAuthFailure
 
   return (
     <div className="finance-customer-picker">
-      <FormField id="finance-customer-search" label="Find customer" hint="Search by name or phone number.">
+      <FormField id="finance-customer-search" label="Find customer" hint="Search by name, phone number, or customer ID.">
         <input id="finance-customer-search" type="search" autoComplete="off" value={search.query}
           onChange={(event) => { search.setQuery(event.target.value); onSelect(null); }} />
       </FormField>

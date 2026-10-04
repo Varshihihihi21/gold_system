@@ -21,7 +21,7 @@ const rateFields = [
 ];
 
 /** Load and update the current date's gold rates through the existing API. */
-export default function RatesPage({ token, deviceGuid, role, notify, onAuthFailure, onTokenRotated }) {
+export default function RatesPage({ token, deviceGuid, notify, onAuthFailure, onTokenRotated }) {
   const { values, setValues, reset, dirty } = useDraftForm(initialRates);
   const tokenRef = useRef(token);
   useEffect(() => {
@@ -33,6 +33,7 @@ export default function RatesPage({ token, deviceGuid, role, notify, onAuthFailu
   const [saving, setSaving] = useState(false);
   const [savedRates, setSavedRates] = useState(null);
   const [auditHistory, setAuditHistory] = useState([]);
+  const [ownerPin, setOwnerPin] = useState('');
   const [loadError, setLoadError] = useState('');
   const [touched, setTouched] = useState({});
 
@@ -60,7 +61,10 @@ export default function RatesPage({ token, deviceGuid, role, notify, onAuthFailu
   useEffect(() => {
     if (!savedRates) return;
     let active = true;
-    apiRequest(`/api/gold-rates/audit?date=${encodeURIComponent(savedRates.rate_date)}`, {
+    const rateDate = savedRates.rate_date instanceof Date
+      ? savedRates.rate_date.toISOString().slice(0, 10)
+      : String(savedRates.rate_date).slice(0, 10);
+    apiRequest(`/api/gold-rates/audit?date=${encodeURIComponent(rateDate)}`, {
       token: tokenRef.current, deviceGuid, onAuthFailure, onTokenRotated,
     }).then((rows) => { if (active) setAuditHistory(rows); })
       .catch((error) => { if (active) notify(`Rate audit history could not be loaded: ${error.message}`, 'error'); });
@@ -88,10 +92,14 @@ export default function RatesPage({ token, deviceGuid, role, notify, onAuthFailu
         deviceGuid,
         onAuthFailure,
         onTokenRotated,
-        body: JSON.stringify(Object.fromEntries(rateFields.map(([key]) => [key, values[key]]))),
+        body: JSON.stringify({
+          ...Object.fromEntries(rateFields.map(([key]) => [key, values[key]])),
+          owner_pin: ownerPin,
+        }),
       });
       setSavedRates(row);
       reset(Object.fromEntries(rateFields.map(([key]) => [key, String(row[key] ?? values[key])])));
+      setOwnerPin('');
       notify('Today’s gold rates were saved.');
     } catch (error) {
       notify(error.message, 'error');
@@ -112,10 +120,7 @@ export default function RatesPage({ token, deviceGuid, role, notify, onAuthFailu
         <section className="surface-card rates-card">
           {!loadError && !savedRates && <Feedback kind="info" title="No rates saved for today">Enter the rates below to create today’s first rate record.</Feedback>}
           {savedRates && <Feedback kind="success" title="Today’s rates are available">
-            {role === 'OWNER' ? 'Changes to today’s rates require an audit record.' : 'Rates are locked after initial setup; ask an OWNER-authorized terminal to change them.'}
-          </Feedback>}
-          {savedRates && role !== 'OWNER' && <Feedback kind="warning" title="Owner authorization required">
-            Only an OWNER-authorized terminal may change rates after today’s rates have been saved.
+            Changes require the owner PIN/password and are written to the audit history.
           </Feedback>}
           <form className="rates-form" onSubmit={submit} noValidate>
             <div className="rate-grid">
@@ -132,10 +137,13 @@ export default function RatesPage({ token, deviceGuid, role, notify, onAuthFailu
                 );
               })}
             </div>
+            <FormField id="rates-owner-pin" label="Owner PIN/password" required>
+              <input id="rates-owner-pin" type="password" autoComplete="current-password" value={ownerPin}
+                onChange={(event) => setOwnerPin(event.target.value)} required />
+            </FormField>
             <div className="form-actions">
               <span className="draft-label">{dirty ? 'Unsaved changes · held in memory only' : 'Changes save only when submitted'}</span>
-              <button className="button button-primary" type="submit"
-                disabled={saving || loading || Boolean(savedRates && role !== 'OWNER')}>
+              <button className="button button-primary" type="submit" disabled={saving || loading || !ownerPin}>
                 {saving ? 'Saving rates…' : 'Save today’s rates'}
               </button>
             </div>
@@ -149,7 +157,7 @@ export default function RatesPage({ token, deviceGuid, role, notify, onAuthFailu
           <thead><tr><th scope="col">Changed</th><th scope="col">Editor</th><th scope="col">999 sell</th><th scope="col">49 sell</th><th scope="col">999 buy</th><th scope="col">Gatti buy</th></tr></thead>
           <tbody>{auditHistory.map((entry) => <tr key={entry.audit_id}>
             <td>{new Date(entry.changed_at).toLocaleString()}</td>
-            <td>{entry.device_name || entry.changed_by}</td>
+            <td>{entry.owner_name || entry.device_name || entry.changed_by}</td>
             <td>{entry.old_rate_999_sell} → {entry.new_rate_999_sell}</td>
             <td>{entry.old_rate_49_sell} → {entry.new_rate_49_sell}</td>
             <td>{entry.old_rate_999_buy} → {entry.new_rate_999_buy}</td>

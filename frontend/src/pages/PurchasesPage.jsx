@@ -6,7 +6,7 @@ import { apiRequest } from '../api.js';
 import { previewPurchase } from '../financial-math.js';
 
 /** Record customer buybacks and initialize opening inventory for an owner. */
-export default function PurchasesPage({ token, deviceGuid, role, notify, onAuthFailure, onTokenRotated }) {
+export default function PurchasesPage({ token, deviceGuid, notify, onAuthFailure, onTokenRotated }) {
   const [rates, setRates] = useState(null);
   const [inventory, setInventory] = useState(null);
   const [customer, setCustomer] = useState(null);
@@ -14,9 +14,12 @@ export default function PurchasesPage({ token, deviceGuid, role, notify, onAuthF
   const [weight, setWeight] = useState('');
   const [touch, setTouch] = useState('');
   const [opening, setOpening] = useState({ physical: '', fine: '', cost: '' });
+  const [ownerPin, setOwnerPin] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [voucher, setVoucher] = useState(null);
+  const [voucherCustomer, setVoucherCustomer] = useState(null);
+  const [printError, setPrintError] = useState('');
   const rate = rates?.[category === '999' ? 'rate_999_buy' : 'rate_fine_gatti_buy'];
   const preview = previewPurchase(category, weight, touch, rate);
 
@@ -33,6 +36,7 @@ export default function PurchasesPage({ token, deviceGuid, role, notify, onAuthF
     if (!customer) return setError('Select the customer selling gold.');
     setBusy(true);
     setError('');
+    setPrintError('');
     try {
       const response = await apiRequest('/api/purchases', {
         method: 'POST', token, deviceGuid, onAuthFailure, onTokenRotated,
@@ -42,6 +46,7 @@ export default function PurchasesPage({ token, deviceGuid, role, notify, onAuthF
         }),
       });
       setVoucher(response.voucher);
+      setVoucherCustomer(customer);
       setWeight('');
       setTouch('');
       setCustomer(null);
@@ -52,6 +57,28 @@ export default function PurchasesPage({ token, deviceGuid, role, notify, onAuthF
       setError(requestError.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function printVoucher() {
+    if (!window.goldline || !voucher || !voucherCustomer) return;
+    setPrintError('');
+    try {
+      await window.goldline.printReceipt({
+        title: 'Kalash Gold purchase voucher',
+        lines: [
+          `Voucher: ${voucher.voucher_number}`,
+          `Customer: ${voucherCustomer.full_name} · ${voucherCustomer.phone_number}`,
+          `Category: ${voucher.category}`,
+          `Actual weight: ${voucher.actual_weight_grams} g`,
+          ...(voucher.touch_percentage === null ? [] : [`Touch: ${voucher.touch_percentage}%`]),
+          `Fine weight: ${voucher.fine_weight_grams} g`,
+          `Rate: ₹${voucher.applied_rate_per_gram}/g`,
+        ],
+        total: `Amount paid: ₹${voucher.total_payout_amount}`,
+      });
+    } catch (failure) {
+      setPrintError(failure.message);
     }
   }
 
@@ -66,9 +93,11 @@ export default function PurchasesPage({ token, deviceGuid, role, notify, onAuthF
           physical_stock_grams: opening.physical,
           fine_stock_grams: opening.fine,
           inventory_cost_amount: opening.cost,
+          owner_pin: ownerPin,
         }),
       });
       setInventory(response.inventory);
+      setOwnerPin('');
       notify('Opening inventory configured.');
     } catch (requestError) {
       setError(requestError.message);
@@ -82,13 +111,19 @@ export default function PurchasesPage({ token, deviceGuid, role, notify, onAuthF
       <div className="page-heading"><div><p className="eyebrow">BUYBACK / STOCK INTAKE</p><h1 id="purchases-title">Purchase gold</h1>
         <p>Record customer intake, payout, and fine-gold weighted-average inventory.</p></div></div>
       {error && <Feedback kind="error" title="Purchase action failed">{error}</Feedback>}
-      {voucher && <Feedback kind="success" title="Purchase recorded">{voucher.voucher_number} · Paid ₹{voucher.total_payout_amount} · Fine weight {voucher.fine_weight_grams} g</Feedback>}
+      {voucher && <Feedback kind="success" title="Purchase recorded">
+        {voucher.voucher_number} · Paid ₹{voucher.total_payout_amount} · Fine weight {voucher.fine_weight_grams} g
+        <div className="form-actions">
+          <button className="button button-secondary" type="button" onClick={printVoucher}>Print purchase voucher</button>
+        </div>
+      </Feedback>}
+      {printError && <Feedback kind="error" title="Voucher could not be printed">{printError}</Feedback>}
       <div className="inventory-summary">
         <span>Physical stock <strong>{inventory?.physical_stock_grams ?? '—'} g</strong></span>
         <span>Fine gold <strong>{inventory?.fine_stock_grams ?? '—'} g</strong></span>
         <span>Stock cost <strong>₹{inventory?.inventory_cost_amount ?? '—'}</strong></span>
       </div>
-      {role === 'OWNER' && inventory && !inventory.opening_configured && !inventory.has_activity && (
+      {inventory && !inventory.opening_configured && !inventory.has_activity && (
         <details className="surface-card">
           <summary>Configure one-time opening inventory</summary>
           <p>Enter the verified physical weight, fine-gold equivalent, and total carrying cost. This cannot be changed after stock activity begins.</p>
@@ -103,6 +138,10 @@ export default function PurchasesPage({ token, deviceGuid, role, notify, onAuthF
                   value={opening[key]} onChange={(event) => setOpening((current) => ({ ...current, [key]: event.target.value }))} required />
               </FormField>
             ))}
+            <FormField id="opening-owner-pin" label="Owner PIN/password" required>
+              <input id="opening-owner-pin" type="password" autoComplete="current-password" value={ownerPin}
+                onChange={(event) => setOwnerPin(event.target.value)} required />
+            </FormField>
             <button className="button button-secondary" type="submit" disabled={busy}>Save opening inventory</button>
           </form>
         </details>

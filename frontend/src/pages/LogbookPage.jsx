@@ -5,11 +5,12 @@ import Skeleton from '../components/Skeleton.jsx';
 import { apiRequest } from '../api.js';
 
 /** Show live daily cash totals and close the drawer after physical reconciliation. */
-export default function LogbookPage({ token, deviceGuid, role, notify, onAuthFailure, onTokenRotated }) {
+export default function LogbookPage({ token, deviceGuid, notify, onAuthFailure, onTokenRotated }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [physical, setPhysical] = useState('');
+  const [ownerPin, setOwnerPin] = useState('');
   const [busy, setBusy] = useState(false);
 
   const reload = useCallback(async () => {
@@ -26,15 +27,16 @@ export default function LogbookPage({ token, deviceGuid, role, notify, onAuthFai
 
   async function closeDay(event) {
     event.preventDefault();
-    if (!window.confirm('Close today’s logbook? This locks the date against further cash entries.')) return;
+    if (!window.confirm('Close today’s logbook? This locks the date against further entries.')) return;
     setBusy(true);
     setError('');
     try {
       const result = await apiRequest('/api/logbook/close', {
         method: 'POST', token, deviceGuid, onAuthFailure, onTokenRotated,
-        body: JSON.stringify({ actual_physical_cash: physical }),
+        body: JSON.stringify({ actual_physical_cash: physical, owner_pin: ownerPin }),
       });
       setData((current) => ({ ...current, summary: result.summary }));
+      setOwnerPin('');
       notify(`Day closed · variance ₹${result.summary.cash_variance}`);
     } catch (requestError) {
       setError(requestError.message);
@@ -47,7 +49,7 @@ export default function LogbookPage({ token, deviceGuid, role, notify, onAuthFai
   return (
     <section className="page-view" aria-labelledby="logbook-title">
       <div className="page-heading"><div><p className="eyebrow">CASH CONTROL / DAILY CLOSE</p><h1 id="logbook-title">Cash logbook</h1>
-        <p>Drawer totals include cash movements only; digital methods are excluded.</p></div>
+        <p>All payment methods are listed. Drawer opening/inflow/outflow totals include CASH only.</p></div>
         <button className="button button-secondary" type="button" onClick={reload}>Refresh</button></div>
       {error && <Feedback kind="error" title="Logbook unavailable">{error}</Feedback>}
       {loading ? <section className="surface-card"><Skeleton rows={4} /></section> : summary && (
@@ -61,7 +63,7 @@ export default function LogbookPage({ token, deviceGuid, role, notify, onAuthFai
           </section>
           <section className="surface-card">
             <h2>Today’s entries</h2>
-            {data.entries.length === 0 ? <Feedback kind="info" title="No cash movements yet">Cash transactions will appear here after they post.</Feedback> : (
+            {data.entries.length === 0 ? <Feedback kind="info" title="No transactions yet">Financial transactions will appear here after they post.</Feedback> : (
               <ul className="logbook-list">{data.entries.map((entry) => (
                 <li key={entry.entry_id}><span><strong>{entry.description || entry.source_type}</strong>
                   <small>{entry.created_at} · {entry.payment_mode} · {entry.source_type}</small></span>
@@ -71,19 +73,23 @@ export default function LogbookPage({ token, deviceGuid, role, notify, onAuthFai
               ))}</ul>
             )}
           </section>
-          {!summary.is_closed && role === 'OWNER' ? (
+          {!summary.is_closed ? (
             <form className="surface-card stacked-form" onSubmit={closeDay}>
               <h2>Reconcile and close</h2>
               <FormField id="physical-cash" label="Physical drawer count (₹)" required hint="Variance is physical count minus calculated close.">
                 <input id="physical-cash" type="number" min="0" step="0.01" value={physical}
                   onChange={(event) => setPhysical(event.target.value)} required />
               </FormField>
-              <button className="button button-primary" type="submit" disabled={busy}>{busy ? 'Closing day…' : 'Reconcile and close day'}</button>
+                  <FormField id="logbook-owner-pin" label="Owner PIN/password" required>
+                    <input id="logbook-owner-pin" type="password" autoComplete="current-password" value={ownerPin}
+                      onChange={(event) => setOwnerPin(event.target.value)} required />
+                  </FormField>
+                  <button className="button button-primary" type="submit" disabled={busy}>{busy ? 'Closing day…' : 'Reconcile and close day'}</button>
             </form>
           ) : summary.is_closed ? (
             <Feedback kind="success" title="Day closed">Physical cash ₹{summary.actual_physical_cash} · Variance ₹{summary.cash_variance}</Feedback>
           ) : (
-            <Feedback kind="info" title="Owner close required">An OWNER-authorized terminal must enter the physical drawer count and close this day.</Feedback>
+            <Feedback kind="info" title="Owner close required">Enter the owner PIN/password to reconcile and close this day.</Feedback>
           )}
         </>
       )}
