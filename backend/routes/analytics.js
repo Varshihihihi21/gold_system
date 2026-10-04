@@ -20,7 +20,7 @@ function averageCents(total, days) {
   return sign * rounded;
 }
 
-/** Create profit analytics from persisted invoice cost basis and expense records. */
+/** Create period-based profit analytics from sales, purchase, and expense records. */
 function createAnalyticsRouter(pool) {
   const router = express.Router();
 
@@ -36,50 +36,35 @@ function createAnalyticsRouter(pool) {
            COALESCE((SELECT SUM(i.line_total) FROM sales_invoice_items i
              JOIN sales_invoices s ON s.invoice_id = i.invoice_id
              WHERE s.invoice_date BETWEEN $1 AND $2), 0)::text AS sales_revenue,
-           COALESCE((SELECT SUM(i.cost_basis_amount) FROM sales_invoice_items i
-             JOIN sales_invoices s ON s.invoice_id = i.invoice_id
-             WHERE s.invoice_date BETWEEN $1 AND $2 AND i.cost_basis_amount IS NOT NULL), 0)::text AS cost_of_goods_sold,
-           (SELECT COUNT(*) FROM sales_invoice_items i
-             JOIN sales_invoices s ON s.invoice_id = i.invoice_id
-             WHERE s.invoice_date BETWEEN $1 AND $2 AND i.cost_basis_amount IS NULL)::int AS missing_cost_count,
            COALESCE((SELECT SUM(amount) FROM expenses WHERE expense_date BETWEEN $1 AND $2 AND category = 'OFFICE'), 0)::text AS office_expenses,
            COALESCE((SELECT SUM(amount) FROM expenses WHERE expense_date BETWEEN $1 AND $2 AND category = 'HOUSEHOLD'), 0)::text AS household_expenses,
-           COALESCE((SELECT SUM(total_payout_amount) FROM purchase_vouchers WHERE purchase_date BETWEEN $1 AND $2), 0)::text AS purchases,
-           (SELECT COUNT(DISTINCT operating_date) FROM (
-             SELECT invoice_date AS operating_date FROM sales_invoices WHERE invoice_date BETWEEN $1 AND $2
-             UNION SELECT purchase_date FROM purchase_vouchers WHERE purchase_date BETWEEN $1 AND $2
-             UNION SELECT payment_date FROM debt_payments WHERE payment_date BETWEEN $1 AND $2
-             UNION SELECT expense_date FROM expenses WHERE expense_date BETWEEN $1 AND $2
-           ) activity)::int AS operating_days`,
+           COALESCE((SELECT SUM(total_payout_amount) FROM purchase_vouchers WHERE purchase_date BETWEEN $1 AND $2), 0)::text AS purchases`,
         [from, to]
       );
       const row = values.rows[0];
       const revenue = aggregateCents(row.sales_revenue);
-      const cogs = aggregateCents(row.cost_of_goods_sold);
+      const purchases = aggregateCents(row.purchases);
       const office = aggregateCents(row.office_expenses);
       const household = aggregateCents(row.household_expenses);
-      const gross = revenue - cogs;
+      const gross = revenue - purchases;
       const operating = gross - office;
-      const complete = Number(row.missing_cost_count) === 0;
       const net = operating - (includeHousehold === 'true' ? household : 0n);
+      const periodDays = calendarDays(from, to);
       return res.json({
         from,
         to,
         include_household: includeHousehold === 'true',
-        operating_days: Number(row.operating_days),
+        period_days: periodDays,
         sales_revenue: formatMoneyCents(revenue),
-        cost_of_goods_sold: complete ? formatMoneyCents(cogs) : null,
-        missing_cost_items: Number(row.missing_cost_count),
-        gross_profit: complete ? formatMoneyCents(gross) : null,
+        purchase_costs: formatMoneyCents(purchases),
+        gross_profit: formatMoneyCents(gross),
         office_expenses: formatMoneyCents(office),
-        operating_profit: complete ? formatMoneyCents(operating) : null,
+        operating_profit: formatMoneyCents(operating),
         household_expenses: formatMoneyCents(household),
-        net_retained_profit: complete ? formatMoneyCents(net) : null,
-        daily_average_profit: complete && row.operating_days
-          ? formatMoneyCents(averageCents(net, Number(row.operating_days)))
+        net_retained_profit: formatMoneyCents(net),
+        daily_average_profit: periodDays
+          ? formatMoneyCents(averageCents(net, periodDays))
           : null,
-        purchases_in_period: formatMoneyCents(aggregateCents(row.purchases)),
-        complete,
       });
     } catch (error) {
       if (error instanceof FinanceError) return res.status(error.status).json({ error: error.message });
@@ -91,10 +76,16 @@ function createAnalyticsRouter(pool) {
   return router;
 }
 
+function calendarDays(from, to) {
+  const first = Date.parse(`${from}T00:00:00.000Z`);
+  const last = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.floor((last - first) / 86400000) + 1;
+}
+
 function validDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-module.exports = { createAnalyticsRouter, aggregateCents, averageCents };
+module.exports = { createAnalyticsRouter, aggregateCents, averageCents, calendarDays };

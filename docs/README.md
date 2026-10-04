@@ -9,7 +9,7 @@ The project has two parts:
 - A **frontend**, the web page the operator uses, built with React and Vite.
 - A **backend**, a Node.js service that checks the terminal's access token and reads or writes records in PostgreSQL.
 
-Development targets a backend at `http://localhost:4000`; packaged builds require an HTTPS API URL. Electron uses an administrator-assigned device GUID and an OS-encrypted Ed25519 private key for device proof. Customer, transaction, and session data remain in renderer memory; the encrypted device credential is intentionally stored through the OS credential facility. Financial workflows require the manually reviewed migration described in [live_schema.md](./live_schema.md); neither authentication nor finance migrations are run automatically. TLS/cloud deployment is external.
+Development targets a backend at `http://localhost:4000`; packaged builds require an HTTPS API URL. Electron uses an administrator-assigned device GUID and an OS-encrypted Ed25519 private key for device proof. Owner-only changes require the separately configured owner PIN/password. Customer and transaction records are stored in PostgreSQL; unsaved form data and the short-lived access token are held in renderer memory. The encrypted device credential is intentionally stored through the OS credential facility. Review and manually apply [the consolidated setup](../backend/database_setup.sql); the app never changes the database automatically. TLS/cloud deployment is external.
 
 ## Technology at a glance
 
@@ -32,7 +32,8 @@ Development targets a backend at `http://localhost:4000`; packaged builds requir
 - [Live Neon schema notes](./live_schema.md) — column types, enum values, keys, and constraints supplied from read-only Neon metadata queries.
 - [Owner-provided database schema](./database_schema.md) — supplied ERD retained as a project reference, not a migration.
 - [Authorized-device SQL reference](./authorised_devices_reference.sql) — owner-provided `authorised_devices` table and seed example; reference only, not a migration.
-- [Device-auth column SQL](../backend/device_auth_schema.sql) — additive database change required for Ed25519 device proof; apply manually after review.
+- [Complete database setup SQL](../backend/database_setup.sql) — idempotent schema for a fresh database and the current known auth/finance additions; inspect and back up before applying to a database with existing data.
+- [Legacy device-auth SQL](../backend/device_auth_schema.sql) — incremental reference; use the consolidated setup script for a complete/current deployment.
 - [API reference](./api_reference.md) — all implemented HTTP routes, inputs, outputs, and errors.
 - [Developer guide](./developer_guide.md) — local setup, configuration, folder layout, and conventions.
 - [US-01–US-11 verification matrix](./verification_matrix.md) — boundary cases, expected values, coverage, and remaining prerequisites.
@@ -73,27 +74,31 @@ The descriptions below cover first-party project files and directories. Generate
 | `backend/routes/` | Authentication-protected rates, customer, payment, and finance API implementations. |
 | `backend/routes/sales.js` | Atomic sales invoice, customer debt, inventory cost, price override, and cash-inflow workflow. |
 | `backend/routes/purchases.js` | Customer buyback voucher, inventory intake, weighted-average cost, and cash outflow. |
+| `backend/set-owner-pin.js` | Interactive CLI to provision or rotate the owner PIN/password without echoing it. |
 | `backend/routes/expenses.js` | Office/household expenses and cash-only drawer postings. |
 | `backend/routes/logbook.js` | Daily logbook summary, cash entries, reconciliation, and close. |
-| `backend/routes/analytics.js` | Date-range revenue, cost basis, profit, and average calculations. |
+| `backend/routes/analytics.js` | Date-range revenue, purchase-cost profit, and inclusive calendar-day average calculations. |
 | `backend/routes/inventory.js` | Inventory balance and one-time owner opening stock configuration. |
 | `backend/finance/` | Shared exact validation, transactions, inventory valuation, logbook posting, and error helpers. |
+| `backend/finance/owner-pin.js` | Scrypt PIN hashing/verification and owner-action audit insertion. |
 | `backend/migrations/001_financial_workflows.sql` | Manual additive migration for inventory, cost basis, audit fields, override audit, and unique logbook-source protection. |
 | `backend/routes/gold-rates.js` | Read and upsert daily gold rates. |
-| `backend/routes/customers.js` | Register customers and search by name or phone substring. |
+| `backend/routes/customers.js` | Register customers and search by name, phone, or UUID substring. |
 | `backend/routes/payments.js` | Record a customer debt payment and update its balance in one transaction. |
 | `backend/db.js` | Loads environment configuration and creates the PostgreSQL connection pool. |
 | `backend/device-auth.js` | Creates one-time challenges and verifies Ed25519 signatures. |
 | `backend/money.js` | Exact integer-cent parsing and formatting. |
 | `backend/gold-calculations.js` | Exact 999/49 sale and 999/Gatti purchase calculations. |
 | `backend/cash-ledger.js` | In-memory cash-flow domain model and day-closing arithmetic. |
-| `backend/device_auth_schema.sql` | Manual additive key/challenge schema; not run automatically. |
+| `backend/device_auth_schema.sql` | Legacy additive key/challenge schema; superseded by the consolidated schema for new deployments. |
+| `backend/database_setup.sql` | Consolidated PostgreSQL schema, constraints/indexes, immutable audit triggers, and fixtures guarded to the disposable `kalash_gold_smoke_test` database. |
 | `backend/test/` | Node built-in tests for calculations, cash flow, device signatures, inventory, analytics and frontend previews. |
 | `backend/test/money.test.js` | Money parsing and formatting boundary tests. |
 | `backend/test/gold-calculations.test.js` | Gold weight, purity, and payout calculation tests. |
 | `backend/test/cash-ledger.test.js` | In-memory cash-flow and daily close model tests. |
 | `backend/test/device-auth.test.js` | Device challenge signature verification tests. |
 | `backend/test/finance.test.js` | Inventory carrying-cost allocation and exact analytics arithmetic tests. |
+| `backend/test/owner-pin.test.js` | Owner PIN validation and scrypt verification tests. |
 | `backend/test/frontend-financial-math.test.js` | Frontend preview math tests using Node's built-in test runner. |
 | `backend/package.json` | Backend dependencies and `node --test` script. |
 | `backend/package-lock.json` | Locks the backend's npm dependency resolution. |
@@ -123,13 +128,13 @@ The descriptions below cover first-party project files and directories. Generate
 | `frontend/src/components/Skeleton.jsx` | Accessible content placeholder for loading states. |
 | `frontend/src/components/Toast.jsx` | Temporary success/error notification and dismiss control. |
 | `frontend/src/hooks/useDraftForm.js` | React-memory-only form state, discarded when its view unmounts. |
-| `frontend/src/hooks/useCustomerSearch.js` | Debounced customer search through the existing phone-search route. |
+| `frontend/src/hooks/useCustomerSearch.js` | Debounced customer search through the name/phone/ID search route. |
 | `frontend/src/pages/LoginPage.jsx` | Challenge-based device sign-in and administrator-visible public-key details. |
 | `frontend/src/pages/RatesPage.jsx` | Load, validate, and save today's rates. |
-| `frontend/src/pages/CustomersPage.jsx` | Customer registration and phone search. |
+| `frontend/src/pages/CustomersPage.jsx` | Customer registration and name/phone search. |
 | `frontend/src/pages/PaymentsPage.jsx` | Customer selection and transactional payment submission. |
 | `frontend/src/pages/SalesPage.jsx` | Billing with rate-based math, customer debt breakdown, and owner override. |
-| `frontend/src/pages/PurchasesPage.jsx` | Buyback calculations, inventory intake, and opening-stock setup. |
+| `frontend/src/pages/PurchasesPage.jsx` | Buyback calculations, printable vouchers, inventory intake, and opening-stock setup. |
 | `frontend/src/pages/ExpensesPage.jsx` | Office and household expense entry. |
 | `frontend/src/pages/LogbookPage.jsx` | Cash-flow review and day close/reconciliation. |
 | `frontend/src/pages/AnalyticsPage.jsx` | Daily/weekly/monthly/custom profit reporting. |
@@ -156,28 +161,27 @@ The descriptions below cover first-party project files and directories. Generate
 |---|---|
 | `docs/README.md` | Plain-English project overview, documentation contents, and project file catalog. |
 | `docs/features.md` | Feature behavior, code locations, inputs/outputs, limitations, and connections. |
-| `docs/data_model.md` | Owner-provided data model, implementation mapping, schema gaps, and data flow. |
-| `docs/live_schema.md` | Live-schema metadata, enum values, confirmed accounting rules, and additive migration requirements. |
+| `docs/data_model.md` | Current data entities, implementation mapping, relationships, and data flow. |
+| `docs/live_schema.md` | Supplied live-schema metadata, enum values, device-key provisioning repair, setup additions, and deployment checks. |
 | `docs/database_schema.md` | Owner-provided full ER diagram retained for future reference, with implementation status and outstanding clarifications. |
 | `docs/authorised_devices_reference.sql` | Owner-provided `authorised_devices` DDL and seed, saved as a non-executable reference. |
-| `backend/device_auth_schema.sql` | Manual `device_public_key` column addition required by challenge-response authentication; not auto-applied. |
-| `docs/verification_matrix.md` | Boundary cases, precise expected values, current implementation coverage, and deployment prerequisites for US-01–US-11. |
+| `docs/verification_matrix.md` | Derived US-01–US-11 and implicit stories, schema/index mapping, boundary cases, and known gaps. |
 | `docs/api_reference.md` | Implemented API routes, headers, request/response examples, and errors. |
 | `docs/developer_guide.md` | Local setup, environment settings, commands, structure, and coding patterns. |
 | `docs/analysis.md` | Phase 1 technical findings and implementation gaps. |
 | `docs/DESIGN.md` | Product colors, typography, spacing, component patterns, and accessibility tokens. |
 | `docs/questions.md` | Unresolved backend/data/product decisions that should not be guessed. |
-| `docs/test-data.md` | Current seeding status and safe database workflow; no data was seeded. |
-| `docs/test-data-plan.md` | Table/query inventory and safeguards for future test data generation. |
+| `docs/test-data.md` | Conditional smoke-fixture coverage and safe disposable-database instructions. |
+| `docs/test-data-plan.md` | Smoke-fixture scope, safety gate, and manual test workflow. |
 | `docs/diagrams/` | Mermaid source diagrams for the main flows, interactions, data model, and architecture. |
-| `docs/diagrams/main_flow.mmd` | Main sign-in and feature request flow. |
-| `docs/diagrams/primary_sequence.mmd` | Device login and payment request sequence between components. |
-| `docs/diagrams/data_model.mmd` | Mermaid ER diagram of the owner-provided business schema. |
+| `docs/diagrams/main_flow.mmd` | Sign-in, financial workflows, owner authorization, and reporting flow. |
+| `docs/diagrams/primary_sequence.mmd` | Device login and transactional sale sequence between components. |
+| `docs/diagrams/data_model.mmd` | Mermaid ER diagram of the current finance and device schema. |
 | `docs/diagrams/database_schema.mmd` | Mermaid ER diagram for the owner-provided schema. |
 | `docs/diagrams/architecture.mmd` | Frontend, backend, database, and operator architecture overview. |
 
 ## Inventory and coverage
 
-The documentation was prepared from the first-party frontend component/entry point/styles, backend server and database connector, package manifests and lockfiles, Vite/ESLint/HTML configuration, existing README, ignore files, static asset names, current user stories, and owner-provided ERD. Installed `node_modules` content is third-party generated dependency material and is excluded. The local `.env` values are not reproduced.
+The documentation catalog covers the first-party frontend, backend, tests, configuration, SQL setup and migration references, project documentation, diagrams, static assets, supplied user stories, and owner-provided ERD. Installed `node_modules` content is third-party generated dependency material and is excluded. The local `.env` values and other secrets are not reproduced.
 
-**Not skipped among the inventoried first-party application files.** Important absent items are called out rather than guessed: there is no checked-in SQL schema or migration, no route-level automated test suite, and no declared deployment/hosting setup.
+**No inventoried first-party application files were intentionally skipped.** Generated dependency trees and local secret values are excluded. Important absent items are called out rather than guessed: there is no route-level automated test suite, no dedicated invoice/purchase/expense history endpoints, and no declared deployment/hosting setup. The SQL has not been run against Neon.

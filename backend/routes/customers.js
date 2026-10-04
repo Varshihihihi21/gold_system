@@ -1,6 +1,6 @@
 const express = require('express');
 
-/** Create customer registration and phone-search API routes. */
+/** Create customer registration and name, phone, or ID search API routes. */
 function createCustomersRouter(pool) {
   const router = express.Router();
 
@@ -32,7 +32,7 @@ function createCustomersRouter(pool) {
     try {
       const result = await pool.query(
         `SELECT * FROM customers
-         WHERE phone_number LIKE $1 OR full_name ILIKE $1
+         WHERE phone_number LIKE $1 OR full_name ILIKE $1 OR customer_id::text LIKE $1
          ORDER BY created_at DESC LIMIT 10`,
         [`%${search.trim()}%`]
       );

@@ -47,4 +47,4 @@ app.use('/api', createAnalyticsRouter(pool));
 app.use('/api', createInventoryRouter(pool));
 
 const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`Goldline API listening on port ${port}`));
+app.listen(port, () => console.log(`Kalash Gold API listening on port ${port}`));

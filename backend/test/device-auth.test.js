@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { createChallenge, verifyDeviceSignature } = require('../device-auth');
+const { createChallenge, parseDevicePublicKey, verifyDeviceSignature } = require('../device-auth');
 
 test('challenge contains a 32-byte random nonce and an unguessable ID', () => {
   const first = createChallenge();
@@ -18,4 +18,15 @@ test('challenge proof verifies only the matching Ed25519 key and nonce', () => {
   assert.equal(verifyDeviceSignature(pair.publicKey.export({ type: 'spki', format: 'pem' }), nonce, signature), true);
   assert.equal(verifyDeviceSignature(pair.publicKey.export({ type: 'spki', format: 'pem' }), Buffer.alloc(32), signature), false);
   assert.equal(verifyDeviceSignature(pair.publicKey.export({ type: 'spki', format: 'pem' }), nonce, '%%%'), false);
+});
+
+test('device public-key parser accepts canonical and SQL-escaped SPKI PEM', () => {
+  const pair = crypto.generateKeyPairSync('ed25519');
+  const publicKey = pair.publicKey.export({ type: 'spki', format: 'pem' });
+  const escapedPem = publicKey.replace(/\n/g, '\\n');
+
+  assert.equal(parseDevicePublicKey(publicKey).asymmetricKeyType, 'ed25519');
+  assert.equal(parseDevicePublicKey(escapedPem).asymmetricKeyType, 'ed25519');
+  assert.throws(() => parseDevicePublicKey('not a public key'), /public key is malformed/);
+  assert.throws(() => parseDevicePublicKey(pair.privateKey.export({ type: 'pkcs8', format: 'pem' })), /public key is malformed/);
 });

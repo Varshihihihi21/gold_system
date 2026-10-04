@@ -13,11 +13,13 @@ flowchart LR
         Server[Express routes]
         Middleware[Short-lived JWT and active-device checks]
         DeviceAuth[Challenge-response login]
+        OwnerPin[Per-action owner PIN verification and audit]
         Pool[PostgreSQL connection pool]
         Server --> Middleware
         Middleware --> Pool
         Server --> Pool
         Server --> DeviceAuth --> Pool
+        Server --> OwnerPin --> Pool
     end
     Pool -->|SQL queries and transactions| PostgreSQL[(PostgreSQL database)]
-    PostgreSQL --- Tables[authorised_devices<br/>device_auth_challenges<br/>daily_gold_rates<br/>customers<br/>debt_payments]
+    PostgreSQL --- Tables[devices and challenges<br/>rates and audits<br/>customers and invoices<br/>purchases, inventory, and debt<br/>expenses and logbook]

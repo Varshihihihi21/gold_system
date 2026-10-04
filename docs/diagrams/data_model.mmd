@@ -30,12 +30,35 @@ erDiagram
     daily_gold_rates_audit {
         UUID audit_id PK
         UUID rate_id FK
+        UUID owner_user_id FK
         DECIMAL old_rate_999_sell
         DECIMAL new_rate_999_sell
         DECIMAL old_rate_49_sell
         DECIMAL new_rate_49_sell
+        DECIMAL old_rate_999_buy
+        DECIMAL new_rate_999_buy
+        DECIMAL old_rate_fine_gatti_buy
+        DECIMAL new_rate_fine_gatti_buy
         VARCHAR changed_by
         TIMESTAMP changed_at
+    }
+    owner_pin_credentials {
+        SMALLINT credential_id PK
+        UUID owner_user_id UK
+        VARCHAR owner_name
+        BYTEA pin_salt
+        BYTEA pin_hash
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+    owner_action_audit {
+        UUID owner_action_id PK
+        UUID owner_user_id FK
+        UUID device_id FK
+        VARCHAR action
+        UUID reference_id
+        JSONB details
+        TIMESTAMP created_at
     }
     customers {
         UUID customer_id PK
@@ -64,6 +87,8 @@ erDiagram
         DECIMAL billed_weight_grams
         DECIMAL applied_rate_per_gram
         DECIMAL line_total
+        DECIMAL fine_weight_grams
+        DECIMAL cost_basis_amount
     }
     purchase_vouchers {
         UUID voucher_id PK
@@ -97,7 +122,7 @@ erDiagram
         VARCHAR description
         TIMESTAMP created_at
     }
-    daily_logbook_summary {
+    daily_logbook_summaries {
         UUID logbook_id PK
         DATE log_date UK
         DECIMAL opening_balance
@@ -120,7 +145,29 @@ erDiagram
         VARCHAR description
         TIMESTAMP created_at
     }
+    inventory_balances {
+        SMALLINT balance_id PK
+        DECIMAL physical_stock_grams
+        DECIMAL fine_stock_grams
+        DECIMAL inventory_cost_amount
+        BOOLEAN opening_configured
+        BOOLEAN has_activity
+        TIMESTAMP updated_at
+    }
+    sales_price_overrides {
+        UUID override_id PK
+        UUID invoice_id FK
+        UUID item_id FK
+        UUID owner_device_id FK
+        UUID owner_user_id FK
+        DECIMAL expected_amount
+        DECIMAL charged_amount
+        TIMESTAMP created_at
+    }
     daily_gold_rates ||--o{ daily_gold_rates_audit : "audited by"
+    owner_pin_credentials ||--o{ daily_gold_rates_audit : "authorized change"
+    owner_pin_credentials ||--o{ owner_action_audit : "authorized action"
+    authorised_devices ||--o{ owner_action_audit : "action terminal"
     customers ||--o{ sales_invoices : "places"
     customers ||--o{ purchase_vouchers : "sells to"
     customers ||--o{ debt_payments : "pays"
@@ -130,3 +177,7 @@ erDiagram
     debt_payments ||--o| logbook_entries : "logged as"
     expenses ||--o| logbook_entries : "logged as"
     authorised_devices ||--o{ device_auth_challenges : "proves possession"
+    authorised_devices ||--o{ sales_price_overrides : "approved by"
+    owner_pin_credentials ||--o{ sales_price_overrides : "approved by"
+    sales_invoices ||--o{ sales_price_overrides : "contains override"
+    sales_invoice_items ||--o{ sales_price_overrides : "price approved"

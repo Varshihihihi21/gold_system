@@ -6,38 +6,41 @@ sequenceDiagram
     participant Auth as Device middleware
     participant DB as PostgreSQL
 
-    Operator->>UI: Select authenticate terminal
-    UI->>Main: Request device GUID and public key
-    UI->>API: POST /api/auth/device-challenge {device_guid}
-    API->>DB: Verify active provisioned device
-    API->>DB: Insert one-use nonce with 60-second expiry
-    API-->>UI: {challengeId, challenge}
-    UI->>Main: Sign challenge
+    Operator->>UI: Authenticate terminal
+    UI->>API: POST device challenge
+    API->>DB: Check active device and store one-time challenge
+    API-->>UI: Challenge ID and nonce
+    UI->>Main: Sign nonce with OS-protected key
     Main-->>UI: Ed25519 signature
-    UI->>API: POST /api/auth/device-login {device_guid, challenge_id, signature}
-    API->>DB: Atomically consume challenge
-    API->>API: Verify signature; issue 5-minute JWT
-    API-->>UI: {token, device_name, device_guid}
-    UI->>UI: Keep token in React memory
+    UI->>API: POST device login with signature
+    API->>DB: Consume challenge and verify registered public key
+    API-->>UI: Short-lived access token
 
-    Operator->>UI: Search/select customer and submit payment
-    UI->>API: POST /api/payments + bearer token + x-device-guid
-    API->>Auth: Check token, GUID match, and active device
-    Auth->>DB: Check authorised_devices
-    DB-->>Auth: Active status
+    Operator->>UI: Select customer, enter sale lines and payment
+    UI->>API: POST /api/sales/invoices with bearer token
+    API->>Auth: Validate token, device GUID, and active device
+    Auth->>DB: Check terminal status
+    DB-->>Auth: Device is active
     Auth-->>API: Allow request
-    API->>DB: BEGIN
-    API->>DB: SELECT pending_balance ... FOR UPDATE
-    DB-->>API: Current balance
-    API->>DB: INSERT debt_payments
-    API->>DB: UPDATE customers.pending_balance
+    API->>DB: BEGIN; load business-date rates
+    API->>API: Calculate category price and validate weight/entered price
+    opt Price mismatch requires owner approval
+        Note over Operator,UI: Operator enters PIN and selects owner override before submitting the invoice
+        API->>DB: Verify scrypt PIN hash
+    end
+    API->>DB: Lock customer and inventory rows
+    API->>DB: Insert invoice and item rows
+    API->>DB: Update customer pending balance and inventory balance
+    API->>DB: Add source-linked CASH inflow when cash received is positive
+    opt Owner-approved price override
+        API->>DB: Add immutable owner and price-override audit rows
+    end
     API->>DB: COMMIT
-    API-->>UI: 201 payment + previous/updated balance + X-Access-Token
-    UI->>UI: Replace in-memory JWT
-    UI-->>Operator: Show receipt and updated balance
+    API-->>UI: Invoice, line items, customer debt summary, rotated token
+    UI-->>Operator: Show invoice and print option
 
-    opt A database operation fails
+    alt Validation or database operation fails
         API->>DB: ROLLBACK
-        API-->>UI: 500 {error}
-        UI-->>Operator: Show payment error
+        API-->>UI: Error status and message
+        UI-->>Operator: Show actionable error; do not report success
     end

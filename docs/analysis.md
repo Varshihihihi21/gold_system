@@ -60,12 +60,12 @@ The owner-provided logical model contains the entities below. Actual public colu
 | `purchase_vouchers` | UUID `voucher_id` PK; VARCHAR `voucher_number` UK; UUID `customer_id` FK; DATE `purchase_date`; ENUM `category`; DECIMAL actual weight, touch, fine weight, rate, payout; TIMESTAMP `created_at` | Customer buyback/purchase voucher. |
 | `debt_payments` | UUID `payment_id` PK; VARCHAR `receipt_number` UK; UUID `customer_id` FK; DATE `payment_date`; DECIMAL `amount_paid`; ENUM `payment_mode`; TEXT `notes`; TIMESTAMP `created_at` | Debt settlements. |
 | `expenses` | UUID `expense_id` PK; DATE `expense_date`; ENUM `category`, `payment_mode`; DECIMAL `amount`; VARCHAR `description`; TIMESTAMP `created_at` | Office/household cash expenses. |
-| `daily_logbook_summary` | UUID `logbook_id` PK; DATE `log_date` UK; DECIMAL opening, inflows, outflows, calculated close, actual cash, variance; BOOLEAN `is_closed`; TIMESTAMP `closed_at` | Daily cash reconciliation. |
+| `daily_logbook_summaries` | UUID `logbook_id` PK; DATE `log_date` UK; DECIMAL opening, inflows, outflows, calculated close, actual cash, variance; BOOLEAN `is_closed`; TIMESTAMP `closed_at` | Daily cash reconciliation. Renamed from the original singular table during setup. |
 | `logbook_entries` | UUID `entry_id` PK; DATE `log_date`; ENUM `entry_type`, `payment_mode`, `source_type`; DECIMAL `amount`; UUID `source_reference_id`; VARCHAR `description`; TIMESTAMP `created_at` | Cash movements, linked polymorphically to their source. |
 
 The app queries `authorised_devices` (`device_id`, `device_guid`, `device_name`, `device_public_key`, `is_active`, `role`) and `device_auth_challenges`. Public-key and challenge-table additions are documented in [the manual auth schema SQL](../backend/device_auth_schema.sql).
 
-Live enum values, precision/scale, and constraints supplied by the owner are documented in [live_schema.md](./live_schema.md). The observed rate audit originally lacked buy-rate old/new fields, which migration 001 adds.
+Live enum values, precision/scale, and constraints supplied by the owner are documented in [live_schema.md](./live_schema.md). The consolidated setup adds buy-rate audit fields, owner PIN support, inventory support, and source-linked cash-flow indexes.
 
 The finance APIs now write invoices, purchases, expenses, debt payments, rate audit records, inventory changes, and source-linked logbook entries in database transactions. Only CASH transactions affect drawer totals. Earlier statements in this analysis that say these workflows are absent are historical and superseded by [api_reference.md](./api_reference.md).
 
@@ -77,20 +77,20 @@ The design uses warm gold accent tokens, neutral light/dark surfaces, system fon
 
 ### Gaps against the new stories
 
-- US-01 through US-10 now have API/UI workflows, including OWNER-device rate changes, audited price overrides, transactional ledger posting, inventory setup, and daily reconciliation.
-- US-11 uses weighted-average fine-gold cost recorded per invoice item. The daily-average denominator is operating dates with at least one sale, purchase, debt payment, or expense.
-- Historical sale items without cost basis are marked incomplete; analytics does not fabricate a zero cost for them.
-- There is no payment-history endpoint, cloud-hosting/TLS configuration, desktop installer workflow, or end-to-end live-Neon run in this repository/environment.
-- Electron main/preload source adds OS-protected private-key storage, memory-only Chromium session controls, and IPC printing through the OS driver. The accepted spooler exception may retain jobs on disk. Packaging and an owner portal are absent.
+- US-01 through US-11 have corresponding API/UI workflows, including PIN-authorized rate changes/overrides/stock setup/day close, source-linked logbook detail, and date-range analytics. See the [verification matrix](./verification_matrix.md); source code has not been run against Neon.
+- US-11 follows the supplied formula: period revenue minus period purchase payouts, then office costs and optionally household costs. The daily average divides by inclusive calendar days.
+- The application has no person-level login system. Audit identity is a single provisioned owner PIN credential plus terminal identity.
+- There are no dedicated invoice, purchase, or expense history endpoints/pages, cloud-hosting/TLS configuration, or desktop installer workflow.
+- Electron main/preload source adds OS-protected private-key storage, memory-only Chromium session controls, and IPC printing through the OS driver for invoices, vouchers, and receipts. The accepted spooler exception may retain jobs on disk. Packaging and an owner portal are absent.
 - Current backend transfer security is deployment-dependent: the code listens with plain HTTP and no TLS 1.3 termination is configured in this repository.
 
 ## E. Gaps and recommendations
 
 1. Keep React/Vite/Express/PostgreSQL and use Electron only as the requested desktop wrapper. Use scaled `BigInt` arithmetic instead of adding a decimal library.
-2. Use the supplied live-schema metadata in [live_schema.md](./live_schema.md), and review/apply migrations manually.
-3. Apply/review `device_auth_schema.sql` and manually provision each terminal's Ed25519 public key before using device login.
+2. Use the supplied live-schema metadata in [live_schema.md](./live_schema.md), and review/apply [database_setup.sql](../backend/database_setup.sql) manually.
+3. Manually provision each terminal's Ed25519 public key after the schema is installed.
 4. Configure production HTTPS/TLS, `VITE_API_BASE_URL`, runtime `GOLD_API_URL`, and exact CORS origins. CORS is not an authentication control.
-5. Review and manually apply `backend/migrations/001_financial_workflows.sql` before deploying the added financial routes; no migration has been applied to Neon.
+5. Back up and review `backend/database_setup.sql`, then apply it to the intended database; no schema script has been applied to Neon by this work.
 6. OS paging/swap, crash dumps, privileged process inspection, and accepted printer-spooler retention remain host-level controls; Electron cannot guarantee that process data never reaches disk.
 
 ## Phase 2 — security and local-exposure audit

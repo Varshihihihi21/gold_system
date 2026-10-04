@@ -13,7 +13,7 @@ This guide describes the implemented terminal workflows. The live schema and mig
 - `frontend/src/App.jsx`: challenge/login calls, in-memory token state, and session clearing.
 - `frontend/src/pages/LoginPage.jsx`: accessible sign-in and public-key display for administrator provisioning.
 - `backend/auth-routes.js`, `backend/device-auth.js`, and `backend/device-middleware.js`: one-time challenge, signature verification, token rotation, and active-device checks.
-- `backend/device_auth_schema.sql`: manual public-key and challenge-table schema addition.
+- `backend/database_setup.sql`: public-key column and challenge-table schema required by device authentication.
 
 **Inputs and outputs:**
 
@@ -35,12 +35,12 @@ This guide describes the implemented terminal workflows. The live schema and mig
 
 ## 2. Daily gold rates
 
-**What it does:** Sets today's four gold rates. An OWNER-authorized device must approve changes after the first save; rate changes record old/new values, time, and editor, and saved rates feed sale/purchase calculations.
+**What it does:** Sets today's four gold rates. Every initial setup or changed value requires the owner PIN/password; changes record old/new values, time, owner credential, and terminal. Saved rates feed sale/purchase calculations.
 
 **Implementation:**
 
 - `frontend/src/pages/RatesPage.jsx`: loads today's row, manages rate form state, validates values, and submits changes.
-- `backend/routes/gold-rates.js`: rate read/write and audit routes. Mid-day changes require `role='OWNER'`.
+- `backend/routes/gold-rates.js`: rate read/write and audit routes, protected by `backend/finance/owner-pin.js`.
 
 **Inputs and outputs:**
 
@@ -50,7 +50,7 @@ This guide describes the implemented terminal workflows. The live schema and mig
 
 **Edge cases and limitations:**
 
-- The page submits decimal strings; the server rejects missing, non-positive, excess-scale, and out-of-range values. Initial setup is allowed for an authenticated terminal; subsequent changes require an OWNER terminal.
+- The page submits decimal strings and an owner PIN; the server rejects missing, non-positive, excess-scale, and out-of-range values. A configured PIN is required for both initial setup and subsequent changes.
 - Database failures return a generic `500` message; server-side logs contain the database error message.
 - The rates view loads today's existing row before enabling the form. A GET failure is shown separately from the no-rates-saved state.
 
@@ -82,17 +82,17 @@ This guide describes the implemented terminal workflows. The live schema and mig
 
 ## 4. Customer name/phone search and debt lookup
 
-**What it does:** Finds up to ten customers whose name or phone contains the entered text, ordered newest first. The finance picker also displays the selected customer's current pending balance.
+**What it does:** Finds up to ten customers whose name, phone, or UUID contains the entered text, ordered newest first. The finance picker also displays the selected customer's current pending balance.
 
 **Implementation:**
 
 - `frontend/src/hooks/useCustomerSearch.js`: shared 300 ms debounced request and search states.
 - `frontend/src/pages/CustomersPage.jsx` and `frontend/src/pages/PaymentsPage.jsx`: labeled phone search and results.
-- `backend/routes/customers.js`: `GET /api/customers/search`.
+- `backend/routes/customers.js`: `GET /api/customers/search`, including text search against the customer UUID.
 
 **Inputs and outputs:**
 
-- Query parameter: `q` (or legacy `phone`), matched as a phone substring or case-insensitive name substring.
+- Query parameter: `q` (or legacy `phone`), matched as a phone or UUID substring or case-insensitive name substring.
 - Success: a JSON array of customer rows; each shown result includes name, phone, balance, and a Select button.
 - Database errors: HTTP `500`.
 
@@ -123,41 +123,41 @@ This guide describes the implemented terminal workflows. The live schema and mig
 **Edge cases and limitations:**
 
 - If the customer is not found, the backend rolls back and returns `404`.
-- The backend rejects non-positive or malformed amounts, unsupported payment modes, and notes longer than 1,000 characters. Overpayment is permitted and can produce a negative balance. CASH payments post a logbook inflow in the same transaction; non-cash modes do not affect drawer totals.
+- The backend rejects non-positive or malformed amounts, unsupported payment modes, and notes longer than 1,000 characters. Overpayment is permitted and can produce a negative balance. Every payment creates a logbook detail entry in the same transaction; only CASH changes drawer totals.
 - Receipt numbers use `RCP-` plus 26 random hexadecimal characters, fitting the database's `VARCHAR(30)` column. A unique-key collision or other transaction error is logged and returned as `500`.
 - Database errors trigger a rollback and return `500`.
 
-**Connections:** The payment record references a customer and adjusts `pending_balance`; the same transaction adds a source-linked CASH inflow to the daily logbook when applicable.
+**Connections:** The payment record references a customer and adjusts `pending_balance`; the same transaction adds a source-linked inflow to the daily logbook, with drawer totals changing only for CASH.
 
 ## 6. Sales billing and validation
 
-Billing creates a customer invoice with one or more `999`/`49` line items. The server—not the UI preview—recalculates each line using today's locked rates and exact integer math. It compares entered prices to the expected amount with a one-cent tolerance. A larger difference blocks submission unless the caller is an OWNER device and sets `owner_override`; every overridden line records both prices and the owner device. Cash received must not exceed the invoice total; the remainder increases customer debt. Only cash actually received is posted to the drawer. Sale, balance, stock cost, override, and logbook changes share one database transaction.
+Billing creates a customer invoice with one or more `999`/`49` line items. The server—not the UI preview—recalculates each line using today's locked rates and exact integer math. It compares entered prices to the expected amount with a one-cent tolerance. A larger difference blocks submission unless the owner PIN is supplied and `owner_override` is enabled; every overridden line records both prices, the owner credential, and terminal. Cash received must not exceed the invoice total; the remainder increases customer debt. Only cash actually received is posted to the drawer. Sale, balance, stock cost, override, and logbook changes share one database transaction.
 
-**Implementation:** `frontend/src/pages/SalesPage.jsx`, `frontend/src/financial-math.js`, `backend/routes/sales.js`, and `backend/finance/inventory.js`. A `49` surcharge changes billed weight for pricing only. Physical stock decreases by actual weight; fine stock uses the confirmed factor in [live_schema.md](./live_schema.md).
+**Implementation:** `frontend/src/pages/SalesPage.jsx`, `frontend/src/financial-math.js`, `backend/routes/sales.js`, and `backend/finance/inventory.js`. A `49` surcharge changes billed weight for pricing only. Physical stock decreases by actual weight; fine stock uses the confirmed factor in [live_schema.md](./live_schema.md). Successful invoices can be printed with previous debt, current bill, payment today, and revised balance.
 
 ## 7. Purchases and inventory
 
-The purchase screen records customer gold buybacks. `999` payout uses actual grams and the 999 buy rate; Gatti payout uses touch-adjusted fine grams and the fine-Gatti rate. A successful purchase creates a voucher, increases weighted-average inventory cost, adds physical/fine stock, and posts cash outflow atomically. The owner-only opening-stock screen is a one-time setup allowed before transaction activity.
+The purchase screen records customer gold buybacks. `999` payout uses actual grams and the 999 buy rate; Gatti payout uses touch-adjusted fine grams and the fine-Gatti rate. A successful purchase creates a printable customer voucher, increases weighted-average inventory cost, adds physical/fine stock, and posts cash outflow atomically. The opening-stock screen is a one-time setup that requires owner PIN/password and is allowed before transaction activity.
 
 **Implementation:** `frontend/src/pages/PurchasesPage.jsx`, `backend/routes/purchases.js`, `backend/routes/inventory.js`, and `backend/finance/inventory.js`.
 
 ## 8. Expenses
 
-The expense screen classifies withdrawals as `OFFICE` or `HOUSEHOLD`, accepts the database's cash/bank/UPI/card modes, and records the expense. Only CASH reduces drawer totals. Both categories are retained for profit reporting.
+The expense screen classifies expenses as `OFFICE` or `HOUSEHOLD`, accepts the database's cash/bank/UPI/card modes, and records a source-linked logbook outflow. Only CASH reduces drawer totals. Both categories are retained for profit reporting.
 
 **Implementation:** `frontend/src/pages/ExpensesPage.jsx` and `backend/routes/expenses.js`.
 
 ## 9. Cash logbook and close
 
-The logbook combines opening cash with source-linked inflows and outflows. Its opening value is the prior recorded day's calculated closing balance. Posting on a day whose previous recorded logbook is open is blocked. An OWNER-authorized device enters the physical drawer count at close; variance is physical minus calculated cash, and the closed day rejects later CASH postings.
+The logbook combines opening cash with cash-only running totals and source-linked entries for cash and non-cash activity. Its opening value is the prior recorded day's calculated closing balance. Posting on a day whose previous recorded logbook is open is blocked. Closing requires owner PIN/password; variance is physical minus calculated cash, and the closed day rejects later postings.
 
 **Implementation:** `frontend/src/pages/LogbookPage.jsx`, `backend/routes/logbook.js`, and `backend/finance/logbook.js`.
 
 ## 10. Profit analytics
 
-Analytics reports sales revenue, weighted-average cost of gold sold, gross profit, office expenses, operating profit, household expenses, net retained profit, and average profit per operating date. The household toggle controls whether household expenses reduce net retained profit. Historic invoice items without cost basis make profit unavailable for the selected range rather than being treated as free gold.
+Analytics reports selected-period sales revenue less selected-period purchase payouts as gross profit, then subtracts OFFICE expenses and optionally HOUSEHOLD expenses. The daily average divides by all inclusive calendar dates in the requested range. Inventory weighted-average cost remains available for stock accounting but is not used in the story-defined gross-profit formula.
 
-**Implementation:** `frontend/src/pages/AnalyticsPage.jsx` and `backend/routes/analytics.js`. Operating days means dates with at least one sale, purchase, debt payment, or expense.
+**Implementation:** `frontend/src/pages/AnalyticsPage.jsx` and `backend/routes/analytics.js`.
 
 ## 11. Shared frontend request and status handling
 

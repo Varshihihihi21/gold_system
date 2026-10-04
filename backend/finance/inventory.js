@@ -24,6 +24,8 @@ function addInventory(inventory, physicalUnits, fineUnits, costCents) {
 
 /** Allocate weighted-average cost and remove actual and fine stock for a sale. */
 function removeInventory(inventory, physicalUnits, fineUnits) {
+  physicalUnits = BigInt(physicalUnits);
+  fineUnits = BigInt(fineUnits);
   const physical = BigInt(inventory.physical_stock_grams.replace('.', ''));
   const fine = BigInt(inventory.fine_stock_grams.replace('.', ''));
   const cost = parseMoneyCents(inventory.inventory_cost_amount, 'Inventory cost');

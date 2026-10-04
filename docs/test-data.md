@@ -1,33 +1,22 @@
-# Test Data
+# Database smoke-test data
 
-## Current status
+## Status
 
-No rows were seeded. The owner has supplied a reference ERD, preserved in [database_schema.md](./database_schema.md), but this repository does not contain an executable database migration and no live Neon schema was inspected. The reference diagram does not settle all nullability, defaults, constraints, or safe test-record marking needed to write or clean test records without risking business data.
+`backend/database_setup.sql` contains small sample rows for every application table. The rows are inserted only when the connected database name is exactly `kalash_gold_smoke_test`; the fixture guard is intentionally disabled for ordinary and production Neon databases.
 
-Read [test-data-plan.md](./test-data-plan.md) for the source-backed entity inventory, dependency graph, observed business rules, provisional volumes, and a read-only Neon schema inventory query.
+To use them:
 
-## Available commands
+1. Create a disposable local database or Neon branch whose database name is exactly `kalash_gold_smoke_test`.
+2. Confirm the SQL Editor is connected to that disposable target, then review and execute the consolidated SQL file.
+3. From `backend/`, run `node set-owner-pin.js` in an interactive terminal before testing owner-protected actions. The fixture PIN hash cannot authenticate.
+4. Verify record counts and calculations before using the fixture app session. Do not run fixture data in a production database.
 
-Seed commands are **not available yet**. The backend currently has no seed scripts or seed-specific dependencies:
+The sample transaction set includes one terminal/challenge, owner credential placeholder, rate row and audit, customer, sale and line item, Gatti purchase, debt payment, office expense, daily cash summary and four logbook entries, current inventory, price override, and owner action audit. The sample inventory is the resulting stock/cost after the included sale and buyback.
 
-- `npm run seed` — not configured.
-- `npm run seed:clean` — not configured.
-- `npm run seed:verify` — not configured.
+## Commands
 
-Do not run an improvised `TRUNCATE` or bulk `DELETE` against a Neon database. The application has real operational data and the schema does not provide a confirmed test marker.
+- `npm test` — runs backend unit tests; it does not connect to PostgreSQL.
+- `node set-owner-pin.js` from `backend/` — provisions/rotates an owner credential in the configured database; requires an interactive terminal.
+- There are no `seed`, `seed:clean`, or `seed:verify` npm commands. The guarded SQL fixtures must not be cleaned by broad `TRUNCATE` or `DELETE` statements.
 
-## Test-record identification
-
-No `is_test` column is declared by the repository. The suggested naming prefixes (`TEST_` for customer names and `test-` for device IDs) are not sufficient to safely mark all four tables: rates are unique per date, while payment receipt/customer key constraints are unknown. A safe clean command needs either an approved test-only Neon branch or a confirmed, consistent test marker with matching schema support.
-
-## Safe Neon workflow
-
-After schema and seed tooling are confirmed, use an isolated disposable Neon branch:
-
-1. Neon Dashboard → **Branches** → **New Branch**.
-2. Name it `test-data`.
-3. Point local backend configuration to that branch without printing or committing credentials.
-4. Verify the active database/branch identity before inserting or cleaning.
-5. Use a normal-size tier first. Never run stress data on a production Neon branch.
-
-No seed count is reported because nothing was inserted. Proposed counts and the information needed to implement and verify them are in [the test data plan](./test-data-plan.md).
+No Neon database has been connected to or changed by this work.

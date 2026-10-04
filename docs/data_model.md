@@ -2,7 +2,7 @@
 
 ## Schema source and implementation status
 
-The owner-supplied ER diagram is documented in [database_schema.md](./database_schema.md). Live public-table columns, enum values, and constraints were later confirmed using Neon metadata and are summarized in [live_schema.md](./live_schema.md). The additive finance migration is [001_financial_workflows.sql](../backend/migrations/001_financial_workflows.sql); it must be applied manually and is not run by the application.
+The owner-supplied ER diagram is documented in [database_schema.md](./database_schema.md). Live public-table columns, enum values, and constraints were later confirmed using Neon metadata and are summarized in [live_schema.md](./live_schema.md). The consolidated current schema is [database_setup.sql](../backend/database_setup.sql); it must be applied manually and is not run by the application.
 
 The backend now implements daily rates and audit, customer search by name/phone, sales, buyback purchases, debt payments, expenses, inventory valuation, cash logbook, day close, and profit analytics. Confirmed decimal types and enums are documented in [live_schema.md](./live_schema.md).
 
@@ -28,7 +28,7 @@ The database and backend use the table name `authorised_devices`, matching the o
 
 The supplied SQL creates indexes for GUID, active rows (partial index), and role. The unique constraint on `device_guid` may make the separate GUID index redundant. It requires `uuid_generate_v4()` to be available. The seed's `ON CONFLICT (device_id)` does not handle a GUID collision under a different device ID.
 
-The original owner DDL is a reference, not a migration. The additional `device_public_key` column is specified in [device_auth_schema.sql](../backend/device_auth_schema.sql) and must be manually applied. Device login now uses a one-time challenge and Ed25519 proof, then issues 5-minute JWTs that are replaced in the response header after each authenticated API request. Every API request also checks the device's active database status. The private key is encrypted with Electron `safeStorage`; this intentionally persists only the OS-protected device credential, not customer or transaction data.
+The original owner DDL is a reference, not a migration. The current setup includes `device_public_key` and the challenge table. Device login uses a one-time challenge and Ed25519 proof, then issues 5-minute JWTs that are replaced in the response header after each authenticated API request. Every API request also checks the device's active database status. The private key is encrypted with Electron `safeStorage`; this intentionally persists only the OS-protected device credential, not customer or transaction data.
 
 ### `daily_gold_rates` — user-facing
 
@@ -56,7 +56,7 @@ The API currently upserts these four rates by `rate_date`, which matches the sup
 | `changed_by` | VARCHAR | Identity of the person who made the change. |
 | `changed_at` | TIMESTAMP | Time of the change. |
 
-The supplied audit entity does not include old/new values for `rate_999_buy` or `rate_fine_gatti_buy`; confirm whether these changes are intentionally unaudited.
+The original live audit entity lacked old/new values for `rate_999_buy` or `rate_fine_gatti_buy`. The current schema adds those columns and rate edits write all four before/after pairs.
 
 ### `customers` — user-facing
 
@@ -88,11 +88,13 @@ The supplied audit entity does not include old/new values for `rate_999_buy` or 
 |---|---|---|
 | `item_id` | UUID | Primary key. |
 | `invoice_id` | UUID | Foreign key to `sales_invoices.invoice_id`. |
-| `category` | ENUM | Gold category; enum values are not supplied. |
+| `category` | `gold_category` | `999` or `49`. |
 | `actual_weight_grams` | DECIMAL | Measured weight. |
 | `billed_weight_grams` | DECIMAL | Weight used for the price calculation. |
 | `applied_rate_per_gram` | DECIMAL | Rate used for this line. |
 | `line_total` | DECIMAL | Final line price. |
+| `fine_weight_grams` | DECIMAL(12,4) | Inventory fine-gold equivalent used for stock and cost allocation. |
+| `cost_basis_amount` | DECIMAL(12,2), nullable | Weighted-average carrying cost allocated to this sale; legacy unknown values remain NULL. |
 
 ### `purchase_vouchers` — user-facing
 
@@ -102,7 +104,7 @@ The supplied audit entity does not include old/new values for `rate_999_buy` or 
 | `voucher_number` | VARCHAR | Unique voucher number. |
 | `customer_id` | UUID | Foreign key to `customers.customer_id`. |
 | `purchase_date` | DATE | Business date. |
-| `category` | ENUM | Purchase category; enum values are not supplied. |
+| `category` | `purchase_category` | `999` or `GATTI`. |
 | `actual_weight_grams` | DECIMAL | Measured item weight. |
 | `touch_percentage` | DECIMAL | Purity percentage, where applicable. |
 | `fine_weight_grams` | DECIMAL | Pure-gold weight derived from weight and touch. |
@@ -119,7 +121,7 @@ The supplied audit entity does not include old/new values for `rate_999_buy` or 
 | `customer_id` | UUID | Foreign key to `customers.customer_id`. |
 | `payment_date` | DATE | Business date. |
 | `amount_paid` | DECIMAL | Payment amount. |
-| `payment_mode` | ENUM | Method of payment; enum values are not supplied. |
+| `payment_mode` | `payment_mode` | `CASH`, `BANK_TRANSFER`, `UPI`, or `CARD`. |
 | `notes` | TEXT | Optional operator note. |
 | `created_at` | TIMESTAMP | Creation time. |
 
@@ -129,13 +131,13 @@ The supplied audit entity does not include old/new values for `rate_999_buy` or 
 |---|---|---|
 | `expense_id` | UUID | Primary key. |
 | `expense_date` | DATE | Business date. |
-| `category` | ENUM | Expense bucket; enum values are not supplied. |
+| `category` | `expense_category` | `OFFICE` or `HOUSEHOLD`. |
 | `amount` | DECIMAL | Expense amount. |
-| `payment_mode` | ENUM | Payment method; enum values are not supplied. |
+| `payment_mode` | `payment_mode` | `CASH`, `BANK_TRANSFER`, `UPI`, or `CARD`. |
 | `description` | VARCHAR | Expense description. |
 | `created_at` | TIMESTAMP | Creation time. |
 
-### `daily_logbook_summary` — internal daily reconciliation
+### `daily_logbook_summaries` — internal daily reconciliation
 
 | Field | Type | Key / meaning |
 |---|---|---|
@@ -156,41 +158,55 @@ The supplied audit entity does not include old/new values for `rate_999_buy` or 
 |---|---|---|
 | `entry_id` | UUID | Primary key. |
 | `log_date` | DATE | Business date of the entry. |
-| `entry_type` | ENUM | Inflow/outflow direction; values are not supplied. |
+| `entry_type` | `entry_type` | `INFLOW` or `OUTFLOW`. |
 | `amount` | DECIMAL | Amount posted. |
-| `payment_mode` | ENUM | Method; values are not supplied. |
-| `source_type` | ENUM | Source record type; values are not supplied. |
+| `payment_mode` | `payment_mode` | `CASH`, `BANK_TRANSFER`, `UPI`, or `CARD`. |
+| `source_type` | `source_type` | `SALE`, `PURCHASE`, `DEBT_PAYMENT`, or `EXPENSE`. |
 | `source_reference_id` | UUID | Identifier of the source record. |
 | `description` | VARCHAR | Human-readable entry description. |
 | `created_at` | TIMESTAMP | Creation time. |
 
 `source_reference_id` is a polymorphic reference in the supplied model: it can point at different source tables depending on `source_type`. The ER model does not specify database-enforced foreign keys for it.
 
+### `owner_pin_credentials` and `owner_action_audit` — internal authorization audit
+
+`owner_pin_credentials` stores one owner identity, a random salt, and a scrypt password hash. The plain PIN/password is not stored. Each owner-only action receives that PIN and writes an immutable `owner_action_audit` row containing the action, credential ID, terminal ID, optional business reference, JSON details, and timestamp. This is not a full user-account system.
+
+### `inventory_balances` — internal singleton stock and valuation
+
+Contains the row with `balance_id = 1`: physical grams, fine-gold equivalent grams, total carrying cost, and flags for one-time opening setup/activity. Sale and purchase transactions lock this row while calculating weighted-average inventory cost. In a normal database the installer creates an empty row; owner PIN authorization is required to record verified opening stock before sales.
+
+### `sales_price_overrides` — internal owner-override audit
+
+Each mismatched invoice line approved with the owner PIN records the invoice, item, owner credential, terminal, formula amount, charged amount, and timestamp. An owner override is not a replacement for normal formula validation.
+
 ## Relationships
 
-- One daily rate row may have multiple audit records.
+- One daily rate row may have multiple immutable audit records.
+- The singleton owner PIN credential may authorize many immutable owner action audit records and price overrides.
 - A customer may have multiple sales invoices, purchase vouchers, and debt payments.
 - A sales invoice contains one or more invoice items.
 - A sale invoice, purchase voucher, debt payment, or expense may have one corresponding logbook entry (optional one-to-zero-or-one as drawn).
 - A daily logbook summary is unique per date. The supplied diagram does not draw a direct relationship from summaries to entries; `log_date` is the apparent grouping key.
 
-The diagram communicates the supplied model. Key labels (`PK`, `FK`, `UK`) come from the supplied schema; they are not proof that a migration currently enforces them.
+The diagram reflects the current application schema. Check the actual Neon catalog after setup; a source SQL file does not prove that it has been applied to a particular database.
 
 ## Existing API-to-schema data flow
 
 1. Device login looks up an active terminal in the `authorised_devices` table. That internal table is not included in the supplied business ER diagram.
 2. `GET /api/gold-rates/today` reads the row for the current date from `daily_gold_rates`.
-3. `POST /api/gold-rates` inserts or updates the four rate columns for `CURRENT_DATE`. It does not currently write `daily_gold_rates_audit` rows or request an owner credential.
-4. `POST /api/customers` inserts a row into `customers`; `GET /api/customers/search` reads customer data by partial phone number.
-5. `POST /api/payments` locks a customer row, inserts a `debt_payments` record, subtracts the payment from `customers.pending_balance`, and commits both changes in a transaction.
-6. The current backend does not create invoices, invoice items, purchase vouchers, expenses, logbook entries/summaries, or analytics results. Those require new API behavior and business rules before their UI can be implemented safely.
+3. Daily rate edits write four-rate audit rows. Sale/purchase transactions read the current database-date rates.
+4. Customer creation/search reads and writes `customers` by phone/name.
+5. Billing writes invoices/items, adjusts customer balance, consumes weighted-average stock, and posts actual cash received to the logbook atomically.
+6. Purchases write vouchers, add weighted-average inventory and post the cash payout as an outflow atomically.
+7. Debt payments adjust customer balance and expenses persist their category. Both create source-linked logbook entries for all modes, but only CASH changes physical drawer totals.
+8. Logbook close stores physical cash and variance and locks further postings for the date. Analytics subtracts selected-period purchase payouts from sales revenue, then OFFICE costs and (optionally) HOUSEHOLD costs; the daily average uses inclusive calendar days. No dedicated invoice/purchase/expense history endpoints currently exist.
 
 ## Known schema/API alignment questions
 
-- The API uses the internal `authorised_devices` table, not shown in the supplied business diagram.
-- Existing payment code assumes it can subtract the payment from `pending_balance`; the meaning of positive/negative balances and overpayment remains unspecified.
-- Rate audit requirements cover mid-day changes in the user stories, but the supplied audit entity only stores before/after sell rates.
-- Enum labels, precise DECIMAL scales, nullability, defaults, indexes, and delete/update behavior are not specified.
-- The supplied diagram shows optional single logbook entry per source, while the “all transactions post entries” story implies exactly one posting on successful transactions. Confirm required cardinality and duplicate-post prevention.
+- The device-auth and finance support tables are not shown in the original business ERD; their definitions are in the consolidated schema.
+- The current code permits debt-payment overpayment, which can result in a negative pending balance.
+- Live enum labels, numeric scales, and nullability are recorded in [live_schema.md](./live_schema.md).
+- The polymorphic logbook source has no cross-table foreign key; a partial unique index prevents duplicate non-null source entries.
 
 See [questions.md](./questions.md) for project-level decisions, [diagrams/database_schema.mmd](./diagrams/database_schema.mmd) for the complete ER source, and [the owner-provided source](./database_schema.md) for a literal schema reference.

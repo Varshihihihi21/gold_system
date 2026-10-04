@@ -3,6 +3,7 @@ const { formatMoneyCents, parseMoneyCents } = require('../money');
 const { parseScaled, formatScaled } = require('../finance/validation');
 const { lockInventory, assertInventoryBounds } = require('../finance/inventory');
 const { withTransaction } = require('../finance/transactions');
+const { verifyOwnerPin, recordOwnerAction } = require('../finance/owner-pin');
 const { FinanceError } = require('../finance/errors');
 
 /** Create inventory balance and one-time owner opening-stock routes. */
@@ -25,8 +26,8 @@ function createInventoryRouter(pool) {
   });
 
   router.post('/inventory/opening', async (req, res) => {
-    if (req.user.role !== 'OWNER') return res.status(403).json({ error: 'An OWNER-authorized terminal is required.' });
-    const { physical_stock_grams: physicalValue, fine_stock_grams: fineValue, inventory_cost_amount: costValue } = req.body || {};
+    const { physical_stock_grams: physicalValue, fine_stock_grams: fineValue,
+      inventory_cost_amount: costValue, owner_pin: ownerPin } = req.body || {};
     try {
       const physical = parseWeightAllowZero(physicalValue, 'physical_stock_grams');
       const fine = parseWeightAllowZero(fineValue, 'fine_stock_grams');
@@ -35,6 +36,7 @@ function createInventoryRouter(pool) {
       if (fine > physical) throw new FinanceError(400, 'fine_stock_grams cannot exceed physical_stock_grams.');
       if (fine === 0n && cost > 0n) throw new FinanceError(400, 'Inventory cost requires positive fine-gold stock.');
       const inventory = await withTransaction(pool, async (client) => {
+        const ownerUserId = await verifyOwnerPin(client, ownerPin);
         const row = await lockInventory(client);
         if (row.opening_configured || row.has_activity) {
           throw new FinanceError(409, 'Opening inventory can only be configured once, before stock activity.');
@@ -46,6 +48,16 @@ function createInventoryRouter(pool) {
            WHERE balance_id = 1 RETURNING *`,
           [formatScaled(physical, 4), formatScaled(fine, 4), formatMoneyCents(cost)]
         );
+        await recordOwnerAction(client, {
+          ownerUserId,
+          deviceId: req.user.device_id,
+          action: 'OPENING_INVENTORY',
+          details: {
+            physical_stock_grams: formatScaled(physical, 4),
+            fine_stock_grams: formatScaled(fine, 4),
+            inventory_cost_amount: formatMoneyCents(cost),
+          },
+        });
         return result.rows[0];
       });
       return res.status(201).json({ inventory });

@@ -1,6 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const { createChallenge, verifyDeviceSignature } = require('./device-auth');
+const { createChallenge, parseDevicePublicKey, verifyDeviceSignature } = require('./device-auth');
 
 /** Create public challenge/login routes for provisioned terminal keys. */
 function createAuthRouter(pool, jwtSecret, tokenTtl) {
@@ -13,10 +13,12 @@ function createAuthRouter(pool, jwtSecret, tokenTtl) {
     }
     try {
       const result = await pool.query(
-        'SELECT device_id FROM authorised_devices WHERE device_guid = $1 AND is_active = true AND device_public_key IS NOT NULL',
+        `SELECT device_id, device_public_key FROM authorised_devices
+         WHERE device_guid = $1 AND is_active = true AND device_public_key IS NOT NULL`,
         [deviceGuid.trim()]
       );
       if (!result.rows.length) return res.status(401).json({ error: 'Device is not provisioned or authorized.' });
+      parseDevicePublicKey(result.rows[0].device_public_key);
 
       const challenge = createChallenge();
       await pool.query('DELETE FROM device_auth_challenges WHERE expires_at <= NOW()');
@@ -28,6 +30,7 @@ function createAuthRouter(pool, jwtSecret, tokenTtl) {
       return res.json({ challengeId: challenge.challengeId, challenge: challenge.challenge });
     } catch (err) {
       console.error('Device challenge could not be issued:', err.message);
+      if (err instanceof TypeError) return res.status(503).json({ error: err.message });
       return res.status(503).json({ error: 'Device authentication is temporarily unavailable.' });
     }
   });
@@ -48,6 +51,7 @@ function createAuthRouter(pool, jwtSecret, tokenTtl) {
       if (!device || !device.device_public_key) {
         return res.status(401).json({ error: 'Device is not provisioned or authorized.' });
       }
+      parseDevicePublicKey(device.device_public_key);
       const challengeResult = await pool.query(
         `DELETE FROM device_auth_challenges
          WHERE challenge_id = $1 AND device_id = $2 AND expires_at > NOW()
@@ -75,6 +79,7 @@ function createAuthRouter(pool, jwtSecret, tokenTtl) {
       });
     } catch (err) {
       console.error('Device login failed:', err.message);
+      if (err instanceof TypeError) return res.status(503).json({ error: err.message });
       return res.status(503).json({ error: 'Device authentication is temporarily unavailable.' });
     }
   });

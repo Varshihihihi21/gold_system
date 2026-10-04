@@ -1,5 +1,7 @@
 const express = require('express');
 const { parseMoneyCents, formatMoneyCents } = require('../money');
+const { verifyOwnerPin, recordOwnerAction } = require('../finance/owner-pin');
+const { FinanceError } = require('../finance/errors');
 
 /** Create API routes for the current day's four validated gold rates. */
 function createGoldRatesRouter(pool) {
@@ -31,23 +33,21 @@ function createGoldRatesRouter(pool) {
         'SELECT * FROM daily_gold_rates WHERE rate_date = CURRENT_DATE FOR UPDATE'
       );
       const current = currentResult.rows[0];
+      const ownerUserId = await verifyOwnerPin(client, req.body?.owner_pin);
       const values = fields.map((field) => formatMoneyCents(rates[field]));
       const changed = current && fields.some((field) =>
         parseMoneyCents(current[field], field) !== rates[field]
       );
-      if (changed && req.user.role !== 'OWNER') {
-        await client.query('ROLLBACK');
-        transactionOpen = false;
-        return res.status(403).json({ error: 'An OWNER-authorized terminal is required to change today’s saved rates.' });
-      }
       if (changed) {
         await client.query(
           `INSERT INTO daily_gold_rates_audit
              (rate_id, old_rate_999_sell, new_rate_999_sell, old_rate_49_sell, new_rate_49_sell,
-              old_rate_999_buy, new_rate_999_buy, old_rate_fine_gatti_buy, new_rate_fine_gatti_buy, changed_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              old_rate_999_buy, new_rate_999_buy, old_rate_fine_gatti_buy, new_rate_fine_gatti_buy,
+              changed_by, owner_user_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [current.rate_id, current.rate_999_sell, values[0], current.rate_49_sell, values[1],
-            current.rate_999_buy, values[2], current.rate_fine_gatti_buy, values[3], req.user.device_id]
+            current.rate_999_buy, values[2], current.rate_fine_gatti_buy, values[3],
+            req.user.device_id, ownerUserId]
         );
       }
       const result = current
@@ -63,12 +63,23 @@ function createGoldRatesRouter(pool) {
            VALUES (CURRENT_DATE, $1, $2, $3, $4) RETURNING *`,
           values
         );
+      if (!current || changed) {
+        await recordOwnerAction(client, {
+          ownerUserId,
+          deviceId: req.user.device_id,
+          action: current ? 'RATE_CHANGE' : 'RATE_SETUP',
+          referenceId: result.rows[0].rate_id,
+          details: { old_rates: current ? Object.fromEntries(fields.map((field) => [field, current[field]])) : null,
+            new_rates: Object.fromEntries(fields.map((field, index) => [field, values[index]])) },
+        });
+      }
       await client.query('COMMIT');
       transactionOpen = false;
       return res.json(result.rows[0]);
     } catch (err) {
       if (transactionOpen) await client.query('ROLLBACK').catch((rollbackError) =>
         console.error('Gold-rate rollback failed:', rollbackError.message));
+      if (err instanceof FinanceError) return res.status(err.status).json({ error: err.message });
       console.error('Gold-rate update failed:', err.message);
       return res.status(500).json({ error: 'Could not save the daily rates.' });
     } finally {
@@ -97,10 +108,11 @@ function createGoldRatesRouter(pool) {
     }
     try {
       const result = await pool.query(
-        `SELECT a.*, d.device_name, d.device_guid
+        `SELECT a.*, d.device_name, d.device_guid, o.owner_name
          FROM daily_gold_rates_audit a
          JOIN daily_gold_rates r ON r.rate_id = a.rate_id
          LEFT JOIN authorised_devices d ON d.device_id::text = a.changed_by
+         LEFT JOIN owner_pin_credentials o ON o.owner_user_id = a.owner_user_id
          WHERE r.rate_date = COALESCE($1::date, CURRENT_DATE)
          ORDER BY a.changed_at DESC`,
         [requestedDate || null]

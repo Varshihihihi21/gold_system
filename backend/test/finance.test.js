@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { addInventory, removeInventory, assertInventoryBounds } = require('../finance/inventory');
-const { aggregateCents, averageCents } = require('../routes/analytics');
+const { aggregateCents, averageCents, calendarDays } = require('../routes/analytics');
 
 function stock(physical = '10.0000', fine = '10.0000', cost = '1000.00') {
   return {
@@ -43,4 +43,5 @@ test('analytics aggregates and daily averages use exact signed cents', () => {
   assert.equal(averageCents(100n, 3), 33n);
   assert.equal(averageCents(-100n, 3), -33n);
   assert.equal(averageCents(50n, 0), null);
+  assert.equal(calendarDays('2026-02-27', '2026-03-01'), 3);
 });

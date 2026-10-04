@@ -4,7 +4,7 @@
 
 Install Node.js `>=22.12.0` and npm (Electron 44 requires this; it also satisfies Vite 8). A reachable PostgreSQL database with the expected tables is required.
 
-The business ERD is preserved in [database_schema.md](./database_schema.md), and live Neon metadata is summarized in [live_schema.md](./live_schema.md). This repository still does not contain a complete database bootstrap schema; obtain one from the database owner. The current API uses the separate `authorised_devices` table.
+The owner-provided ERD is preserved in [database_schema.md](./database_schema.md), live Neon metadata and page-to-table mapping are summarized in [live_schema.md](./live_schema.md), and the current complete schema is [backend/database_setup.sql](../backend/database_setup.sql). The application expects PostgreSQL's `public` schema and uses the British-spelled table `authorised_devices`.
 
 ## Configuration
 
@@ -32,9 +32,9 @@ Do not commit `.env` or copy real credentials into documentation or logs. Postgr
 
 The frontend uses `VITE_API_BASE_URL` (development default `http://localhost:4000`). Production builds require HTTPS. The Electron main process also requires runtime `GOLD_API_URL` to match the built API origin; packaged mode refuses HTTP. Each terminal needs `GOLD_DEVICE_GUID`. The main process creates an Ed25519 keypair and stores only the OS-encrypted private key in the application-data folder.
 
-Before login can work, manually review/apply `backend/device_auth_schema.sql`. It assumes the database table is named `authorised_devices`. Launch the desktop client once, open “Show device details for administrator provisioning,” and insert its public key into the matching `authorised_devices.device_public_key` row. Do not copy or export the private key. There is no public enrollment endpoint or owner portal in this repository.
+Before login or finance routes can work, take a backup and compare the target database with [live_schema.md](./live_schema.md). Then review and run `backend/database_setup.sql` in the intended database using its SQL Editor or an administrative SQL client. In normal databases the script creates/extends the schema, backfills sale fine weights, creates the singleton zeroed inventory row, and installs indexes and audit triggers; it does not create live devices, rates, customers, or opening stock. Smoke-test fixtures are guarded to a disposable database named exactly `kalash_gold_smoke_test`. The script aborts on enum-label mismatches or duplicate logbook source references; resolve those explicitly rather than deleting business data. Do not also run `device_auth_schema.sql` or migration 001 when using the consolidated setup script. These files remain historical incremental references.
 
-Before deploying the financial API additions, back up and manually review/apply `backend/migrations/001_financial_workflows.sql` in Neon. It adds complete rate-audit fields, inventory and sale cost-basis data, override audit records, and a unique logbook-source index. The migration intentionally stops if duplicate source references exist. Apply migrations during a controlled deployment; the backend never runs them automatically. Provision owner terminals by setting `authorised_devices.role = 'OWNER'`; normal terminals remain `TERMINAL`.
+The app never applies SQL automatically. Confirm that the backend's `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER` point at the database where the script was run. Launch the terminal once, open “Show device details for administrator provisioning,” and insert its public key into the matching `authorised_devices.device_public_key` row. Do not copy or export the private key. Then, from `backend/`, run `node set-owner-pin.js` in an interactive terminal to configure or rotate the owner PIN/password. The PIN is required at every owner-only action; a terminal's role is not a substitute.
 
 ## Install and run locally
 
@@ -70,7 +70,7 @@ $env:GOLD_API_URL = "http://localhost:4000"
 npm run desktop:dev
 ```
 
-Use the “Authenticate terminal” button, then test rates, customers, billing, buybacks, debt settlement, expenses, logbook, and analytics. The backend must be running, auth schema and finance migration applied, device public key provisioned, and opening inventory configured by an owner before sales can be made.
+Use the “Authenticate terminal” button, then test rates, customers, billing, buybacks, debt settlement, expenses, logbook, and analytics. The backend must be running, the consolidated schema applied, device public key provisioned, owner PIN configured, and opening inventory configured before sales can be made.
 
 ## Available frontend commands
 

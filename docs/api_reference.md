@@ -1,6 +1,6 @@
 # API reference
 
-The backend listens on `PORT`, defaulting to `4000`. Routes are registered by `backend/server.js` and implemented in `backend/auth-routes.js` and `backend/routes/`. Apply [migration 001](../backend/migrations/001_financial_workflows.sql) before deploying the finance endpoints. The development frontend defaults to `http://localhost:4000`; a packaged Electron build requires `VITE_API_BASE_URL` to use HTTPS.
+The backend listens on `PORT`, defaulting to `4000`. Routes are registered by `backend/server.js` and implemented in `backend/auth-routes.js` and `backend/routes/`. Apply [the consolidated database setup](../backend/database_setup.sql) before deploying; do not also run the older auth/finance scripts when using it. The development frontend defaults to `http://localhost:4000`; a packaged Electron build requires `VITE_API_BASE_URL` to use HTTPS.
 
 ## Authentication and common requirements
 
@@ -11,11 +11,13 @@ The backend listens on `PORT`, defaulting to `4000`. Routes are registered by `b
 
 The Electron main process stores an Ed25519 private key encrypted with the OS credential facility. The renderer requests a server challenge; the main process signs it, and login verifies the signature against `authorised_devices.device_public_key`. The database challenge is single-use and expires after 60 seconds. Login issues a 5-minute JWT. Successful protected requests receive a replacement 5-minute token in `X-Access-Token`; the renderer keeps the latest token in React memory. Every protected request checks the active device row, so disabling the license is enforced on its next request.
 
+If login reports a malformed/unsupported key, open **Show device details for administrator provisioning** on that terminal and update `authorised_devices.device_public_key` with the complete displayed Ed25519 public key, including the `BEGIN/END PUBLIC KEY` lines. The key must be SPKI PEM and must come from the same terminal's OS-stored private key. Do not use an example key or a private key.
+
 Protected-route failures use `401` for a missing/invalid/expired token and `403` for a missing device header, device mismatch, or unauthorized/inactive device. Database authorization failures return `500`. All request bodies are JSON. Error response shape is generally `{ "error": "message" }`.
 
 ## `POST /api/auth/device-challenge`
 
-Starts a one-time proof-of-possession challenge for an active, provisioned terminal. Requires the manual schema change in `backend/device_auth_schema.sql`.
+Starts a one-time proof-of-possession challenge for an active, provisioned terminal. Requires the schema in `backend/database_setup.sql`.
 
 **Request**
 
@@ -65,7 +67,7 @@ Verifies the one-time signature produced by the Electron main process and issues
 
 ## `POST /api/gold-rates`
 
-Creates today's initial rates or updates existing rates. Only an `OWNER` device may change rates once today's row exists; each change records all four old/new values, timestamp, and owner device ID in `daily_gold_rates_audit`.
+Creates today's initial rates or updates existing rates. Every setup or change requires the separately configured owner PIN/password. Include it in the request body; authorization is independent of whether the active terminal's role is `OWNER` or `TERMINAL`. Each change records all four old/new values, timestamp, owner credential, and terminal in audit records.
 
 **Request**
 
@@ -74,7 +76,8 @@ Creates today's initial rates or updates existing rates. Only an `OWNER` device 
   "rate_999_sell": "7250.00",
   "rate_49_sell": "6800.00",
   "rate_999_buy": "7100.00",
-  "rate_fine_gatti_buy": "7000.00"
+  "rate_fine_gatti_buy": "7000.00",
+  "owner_pin": "<owner PIN/password>"
 }
 ```
 
@@ -82,7 +85,7 @@ All rates must be positive decimal strings with at most two decimal places and m
 
 **Success — `200`:** Returns the inserted or updated `daily_gold_rates` row. Exact response fields/types depend on the database schema.
 
-**Errors:** `400` invalid rates; `401`/`403` from authentication or owner authorization; `500` for a database error.
+**Errors:** `400` invalid rates; `403` missing/incorrect PIN; `503` PIN is not configured; `401`/`403` from device authentication; `500` for a database error.
 
 ## `GET /api/gold-rates/today`
 
@@ -107,13 +110,14 @@ Creates an invoice, item rows, customer balance adjustment, weighted-average inv
     { "category": "49", "actual_weight_grams": "1.0000", "entered_line_total": "6806.80" }
   ],
   "cash_received": "1000.00",
-  "owner_override": false
+  "owner_override": false,
+  "owner_pin": "<required only for a price override>"
 }
 ```
 
-The server uses today's saved rate and calculates the expected line amount. The `49` billed-weight surcharge is only commercial pricing; actual physical grams and the `0.9999` fine-gold equivalent drive stock depletion. The `999` fine-gold factor is `0.9990`. A difference up to one cent is accepted at the calculated total. A larger mismatch returns `422` unless `owner_override` is true and the calling device has role `OWNER`; approved overrides are recorded with expected/charged amounts and the owner device. Cash may not exceed the invoice total; the remainder increases customer debt. The API rejects sales exceeding physical or fine-gold inventory.
+The server uses today's saved rate and calculates the expected line amount. The `49` billed-weight surcharge is only commercial pricing; actual physical grams and the `0.9999` fine-gold equivalent drive stock depletion. The `999` fine-gold factor is `0.9990`. A difference up to one cent is accepted at the calculated total. A larger mismatch returns `422` unless `owner_override` is true and the correct owner PIN is supplied; approved overrides are recorded with expected/charged amounts, owner credential, and terminal. Cash may not exceed the invoice total; the remainder increases customer debt. The API rejects sales exceeding physical or fine-gold inventory.
 
-**Success — `201`:** `{ "invoice": <invoice row>, "previous_balance": "...", "cash_paid_today": "...", "updated_balance": "..." }`.
+**Success — `201`:** Returns the invoice, customer name/phone, saved line items, previous balance, current bill, cash paid today, and revised balance. Those fields are used by the printable invoice summary.
 
 ## `POST /api/purchases`
 
@@ -128,7 +132,7 @@ Creates a customer purchase voucher and, atomically, adds actual/fine stock, pur
 }
 ```
 
-Category is `999` or `GATTI`. Gatti fine weight is actual weight times touch percentage. The 999 fine-stock factor is `0.9990`; the 999 payout uses actual weight times the 999 buy rate. The schema has no purchase payment-mode field, so purchase payouts are recorded as cash.
+Category is `999` or `GATTI`. Gatti fine weight is actual weight times touch percentage. The 999 fine-stock factor is `0.9990`; the 999 payout uses actual weight times the 999 buy rate. The schema has no purchase payment-mode field, so purchase payouts are recorded as cash. Success returns the voucher details, which can be printed from the purchase success view.
 
 ## `POST /api/expenses`
 
@@ -137,17 +141,17 @@ Records an expense. Body: `{ "category": "OFFICE|HOUSEHOLD", "amount": "50.00", 
 ## Inventory routes
 
 - `GET /api/inventory` returns physical grams, fine-gold grams, inventory carrying cost, and opening setup status.
-- `POST /api/inventory/opening` sets the initial balance once and only from an `OWNER` device. Body: `{ "physical_stock_grams": "100.0000", "fine_stock_grams": "99.9000", "inventory_cost_amount": "650000.00" }`. It is rejected after opening was configured or purchase/sale activity begins.
+- `POST /api/inventory/opening` sets the initial balance once and requires the owner PIN/password. Body: `{ "physical_stock_grams": "100.0000", "fine_stock_grams": "99.9000", "inventory_cost_amount": "650000.00", "owner_pin": "<PIN>" }`. It is rejected after opening was configured or purchase/sale activity begins.
 
 ## Logbook routes
 
 - `GET /api/logbook/today` returns today's summary and source-linked entries. It creates an empty daily summary when needed, using the most recent closed balance as the opening amount. Posting is blocked if the previous recorded logbook is still open.
-- `POST /api/logbook/close` body: `{ "actual_physical_cash": "1234.50" }`. Requires an OWNER-authorized device. It calculates variance as physical count minus calculated close and locks the date. Closed days reject new cash postings.
-- Only CASH affects drawer totals. A unique partial index on `(source_type, source_reference_id)` prevents a business source from being posted twice.
+- `POST /api/logbook/close` body: `{ "actual_physical_cash": "1234.50", "owner_pin": "<PIN>" }`. Requires the owner PIN/password. It calculates variance as physical count minus calculated close and locks the date. Closed days reject new postings.
+- CASH and non-cash transactions create source-linked entries. Only CASH affects drawer totals. A unique partial index on `(source_type, source_reference_id)` prevents a business source from being posted twice.
 
 ## `GET /api/analytics/profit?from=YYYY-MM-DD&to=YYYY-MM-DD&include_household=true`
 
-Returns sales revenue, weighted-average cost of gold sold, gross/operating/net profit, expense totals, purchase outlays, and the rounded daily average. The period's operating-day count is the number of distinct dates with sales, purchases, debt payments, or expenses. Purchase payments add inventory cost; COGS is recognized when stock is sold. If any historic sale item has no cost basis, profit values are `null` and `complete` is false rather than incorrectly assuming zero cost. `include_household=false` leaves household expenses out of net retained profit.
+Returns sales revenue, purchase costs, gross/operating/net profit, expense totals, inclusive calendar-day count, and rounded daily average. Gross profit is selected-period sales revenue minus selected-period purchase payouts, per US-11; inventory weighted-average cost is not substituted for those payouts. `include_household=false` leaves household expenses out of net retained profit. Example: `GET /api/analytics/profit?from=2026-05-01&to=2026-05-31&include_household=false`.
 
 ## `POST /api/customers`
 
@@ -225,6 +229,6 @@ Generated receipt numbers contain 30 characters (`RCP-` plus 26 random hexadecim
 
 ## API-wide notes
 
-- CORS uses the backend's exact `CORS_ORIGINS` allowlist. Packaged Electron uses `goldline://app`; configure only trusted origins.
+- CORS uses the backend's exact `CORS_ORIGINS` allowlist. Packaged Electron currently uses the internal `goldline://app` protocol for compatibility; configure only trusted origins.
 - No pagination, API version negotiation, or request schema-validation layer is configured.
 - Most routes return a user-safe generic database error; server logs include the underlying database error for operators.

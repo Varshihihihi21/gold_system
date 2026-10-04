@@ -1,28 +1,32 @@
 flowchart TD
-    A[Open Electron terminal] --> B[Clear transient Chromium session data]
-    B --> C[Load encrypted device key from OS-protected storage]
-    C --> D[Request one-time challenge]
-    D --> E{Device active and public key provisioned?}
-    E -- No --> F[Show sign-in error]
-    E -- Yes --> G[Sign nonce in Electron main process]
-    G --> H[POST signature to device-login]
-    H --> I{Signature valid and challenge unused?}
-    I -- No --> F
-    I -- Yes --> J[Return 5-minute JWT]
-    J --> K[Keep token in React memory]
-    K --> L[Show terminal modules]
-    L --> M{Operator action}
-    M --> N[Save today's rates]
-    M --> O[Register/search customer]
-    M --> P[Submit debt payment]
-    N --> Q[Protected API verifies JWT and active device]
-    O --> Q
-    P --> Q
-    Q --> R{Authorized?}
-    R -- No --> S[Clear React session and Chromium storage]
-    R -- Yes --> T[Read or update PostgreSQL]
-    T --> U[Return JSON and rotated token]
-    U --> V[Update in-memory view/session]
-    T -. Payment error .-> W[Rollback payment transaction]
-    W --> X[Show actionable error]
-    S --> X
+    A[Open Kalash Gold terminal] --> B[Authenticate approved device]
+    B --> C{Active and signature valid?}
+    C -- No --> D[Show sign-in error]
+    C -- Yes --> E[Show finance screens]
+    E --> F{Choose task}
+    F --> G[Set today's rates]
+    F --> H[Search or register customer]
+    F --> I[Create sale invoice]
+    F --> J[Buy customer gold]
+    F --> K[Settle customer debt]
+    F --> L[Record expense]
+    F --> M[Review or close logbook]
+    F --> N[View date-range profit]
+    G --> O[Protected API validates input]
+    I --> H
+    J --> H
+    K --> H
+    O --> P{Owner-only action?}
+    P -- Yes --> Q[Verify owner PIN and record audit]
+    P -- No --> R[Run transaction]
+    Q --> R
+    R --> S{Inputs and business rules pass?}
+    S -- No --> T[Rollback and show actionable error]
+    S -- Yes --> U[Write business records and source-linked logbook]
+    U --> V[Update customer or inventory balance if needed]
+    V --> W[Commit and return result]
+    W --> X[Display result or print invoice, voucher, or receipt]
+    M --> Y{Close day?}
+    Y -- Yes --> P
+    Y -- No --> Z[Show cash totals and all logbook detail]
+    N --> AA[Show revenue, purchase costs, expenses, and inclusive-day average]
